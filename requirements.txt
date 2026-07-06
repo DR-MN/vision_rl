@@ -1,0 +1,16 @@
+# Core JAX stack (install the CUDA build to use the GPU):
+#   pip install "jax[cuda12]"
+jax
+jaxlib
+flax
+optax
+# (policy distribution is hand-rolled in models/distributions.py -> no distrax/tfp)
+
+# Physics + rendering
+mujoco
+mujoco-mjx
+# Optional GPU batch renderer (build from source; see README):
+#   https://github.com/shacklettbp/madrona_mjx
+# madrona-mjx
+
+numpy
