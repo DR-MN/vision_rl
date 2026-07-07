@@ -26,6 +26,22 @@ from vision_rl.models import ActorCritic
 from vision_rl.ppo import compute_gae, create_train_state, ppo_update
 
 
+def _init_wandb(cfg: Config, n_params: int):
+    """Start a Weights & Biases run; config is logged for reproducibility."""
+    import dataclasses
+
+    import wandb
+
+    run = wandb.init(
+        project=cfg.wandb_project,
+        entity=cfg.wandb_entity,
+        name=cfg.wandb_run_name or cfg.exp_name,
+        config={**dataclasses.asdict(cfg), "n_params": n_params},
+    )
+    print(f"[wandb] logging to {run.url}")
+    return run
+
+
 def _build_network(cfg: Config, action_size: int) -> ActorCritic:
     return ActorCritic(
         action_dim=action_size,
@@ -44,6 +60,7 @@ def make_train(cfg: Config) -> Callable[[], dict]:
     ppo = cfg.ppo
 
     num_updates = ppo.total_env_steps // cfg.batch_size
+    n_gui = min(ppo.num_envs, cfg.gui_envs)   # worlds mirrored in the tiled viewer
 
     def apply_fn(params, obs):
         return network.apply(params, obs)
@@ -72,6 +89,9 @@ def make_train(cfg: Config) -> Callable[[], dict]:
                 "done": next_vstate.env_state.done,
                 "dist": next_vstate.env_state.metrics["dist"],
                 "success": next_vstate.env_state.metrics["success"],
+                # First n_gui worlds' state, for the optional tiled GUI mirror.
+                "qpos": next_vstate.env_state.data.qpos[:n_gui],
+                "mocap": next_vstate.env_state.data.mocap_pos[:n_gui],
             }
             return (next_vstate, rng), transition
 
@@ -117,7 +137,10 @@ def make_train(cfg: Config) -> Callable[[], dict]:
             "mean_dist": traj["dist"].mean(),
             "success_rate": traj["success"].mean(),
         }
-        return train_state, vstate, metrics
+        # Rollout trajectory of the first n_gui worlds, for the tiled GUI (kept
+        # on device until the driver pulls it; negligible cost when GUI is off).
+        viz = {"qpos": traj["qpos"], "mocap": traj["mocap"]}
+        return train_state, vstate, metrics, viz
 
     # ----------------------------------------------------------------- #
     # Driver
@@ -135,6 +158,13 @@ def make_train(cfg: Config) -> Callable[[], dict]:
         print(f"[init] updates = {num_updates}, batch = {cfg.batch_size}, "
               f"minibatch = {cfg.minibatch_size}")
 
+        run = _init_wandb(cfg, n_params) if cfg.use_wandb else None
+        gui = None
+        if cfg.gui:
+            from vision_rl.envs.tiled_viewer import TiledMirror
+            gui = TiledMirror(env.xml_path, env.mj_model, n_show=n_gui,
+                              realtime=cfg.gui_realtime, ctrl_dt=env.ctrl_dt)
+
         vstate = env.reset(reset_rng)
 
         os.makedirs(cfg.ckpt_dir, exist_ok=True)
@@ -142,9 +172,11 @@ def make_train(cfg: Config) -> Callable[[], dict]:
         start = time.time()
         for it in range(1, num_updates + 1):
             rng, it_rng = jax.random.split(rng)
-            train_state, vstate, metrics = train_iteration(
+            train_state, vstate, metrics, viz = train_iteration(
                 train_state, vstate, it_rng
             )
+            if gui is not None:
+                gui.replay(viz)
 
             if it % ppo.log_interval == 0:
                 metrics = jax.tree_util.tree_map(lambda x: float(x), metrics)
@@ -160,12 +192,18 @@ def make_train(cfg: Config) -> Callable[[], dict]:
                     f"ent={metrics['entropy']:+.2f} "
                     f"| {sps:,.0f} sps"
                 )
+                if run is not None:
+                    run.log({**metrics, "sps": sps}, step=steps)
 
             if it % ppo.ckpt_interval == 0 or it == num_updates:
                 path = os.path.join(cfg.ckpt_dir, f"{cfg.exp_name}_it{it}.msgpack")
                 with open(path, "wb") as f:
                     f.write(serialization.to_bytes(train_state.params))
 
+        if run is not None:
+            run.finish()
+        if gui is not None:
+            gui.close()
         return {"train_state": train_state, "history": history}
 
     return train
@@ -174,23 +212,55 @@ def make_train(cfg: Config) -> Callable[[], dict]:
 def main():
     import argparse
 
-    from vision_rl.config import small_config
+    from vision_rl.config import small_config, so101_config
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--task", type=str, default="so101_pick_place",
+                        choices=["franka_reach", "so101_pick_place"])
     parser.add_argument("--small", action="store_true", help="tiny config for tests")
     parser.add_argument("--num-envs", type=int, default=None)
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--backend", type=str, default=None,
                         choices=["madrona", "cpu", "auto"])
+    parser.add_argument("--wandb", action="store_true", help="log to Weights & Biases")
+    parser.add_argument("--wandb-project", type=str, default=None)
+    parser.add_argument("--wandb-name", type=str, default=None)
+    parser.add_argument("--gui", action="store_true",
+                        help="open a live window tiling training worlds")
+    parser.add_argument("--gui-envs", type=int, default=None,
+                        help="max worlds to show in the tiled GUI (default 16)")
+    parser.add_argument("--gui-fast", action="store_true",
+                        help="with --gui, replay as fast as possible (not real-time)")
     args = parser.parse_args()
 
-    cfg = small_config() if args.small else Config()
+    if args.task == "so101_pick_place":
+        cfg = so101_config()
+    else:
+        cfg = Config()
+    if args.small:
+        cfg.ppo.num_envs = 32
+        cfg.ppo.rollout_length = 8
+        cfg.ppo.num_minibatches = 4
+        cfg.ppo.total_env_steps = 200_000
+        cfg.render.width = cfg.render.height = 48
     if args.num_envs is not None:
         cfg.ppo.num_envs = args.num_envs
     if args.steps is not None:
         cfg.ppo.total_env_steps = args.steps
     if args.backend is not None:
         cfg.render.backend = args.backend
+    if args.wandb:
+        cfg.use_wandb = True
+    if args.wandb_project is not None:
+        cfg.wandb_project = args.wandb_project
+    if args.wandb_name is not None:
+        cfg.wandb_run_name = args.wandb_name
+    if args.gui:
+        cfg.gui = True
+    if args.gui_envs is not None:
+        cfg.gui_envs = args.gui_envs
+    if args.gui_fast:
+        cfg.gui_realtime = False
 
     train = make_train(cfg)
     train()

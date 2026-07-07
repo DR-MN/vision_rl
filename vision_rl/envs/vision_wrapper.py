@@ -17,7 +17,6 @@ import jax.numpy as jnp
 from flax import struct
 
 from vision_rl.config import Config
-from vision_rl.envs.franka_reach import EnvState, FrankaReachEnv
 from vision_rl.rendering import make_renderer
 
 
@@ -36,7 +35,9 @@ class VisionVecEnv:
         self.num_envs = cfg.ppo.num_envs
         self.frame_stack = cfg.encoder.frame_stack
 
-        self.env = FrankaReachEnv(cfg.env)
+        from vision_rl.envs import make_env  # lazy import to avoid import cycle
+
+        self.env = make_env(cfg)
         self.renderer = make_renderer(
             self.env.mj_model, self.env.mjx_model, cfg.render, self.num_envs
         )
@@ -47,6 +48,20 @@ class VisionVecEnv:
     # ------------------------------------------------------------------ #
     # Spec
     # ------------------------------------------------------------------ #
+    @property
+    def mj_model(self):
+        """Classic MjModel of the base env (for the live GUI viewer)."""
+        return self.env.mj_model
+
+    @property
+    def xml_path(self) -> str:
+        """Scene XML path of the base env (for the tiled GUI viewer)."""
+        return self.env.xml_path
+
+    @property
+    def ctrl_dt(self) -> float:
+        return self.env.cfg.ctrl_dt
+
     @property
     def action_size(self) -> int:
         return self.env.action_size

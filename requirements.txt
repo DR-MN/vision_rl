@@ -14,3 +14,6 @@ mujoco-mjx
 # madrona-mjx
 
 numpy
+
+# Optional: experiment tracking
+# wandb

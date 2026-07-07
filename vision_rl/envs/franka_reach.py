@@ -56,6 +56,7 @@ class FrankaReachEnv:
 
         self.mj_model = mujoco.MjModel.from_xml_path(_SCENE_XML)
         self.mjx_model = mjx.put_model(self.mj_model)
+        self.xml_path = _SCENE_XML
 
         # Control decimation: policy steps at ctrl_dt, physics at model timestep.
         sim_dt = float(self.mj_model.opt.timestep)

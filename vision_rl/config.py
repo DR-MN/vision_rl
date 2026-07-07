@@ -33,6 +33,34 @@ class EnvConfig:
 
 
 @dataclass
+class SO101Config:
+    """SO-101 pick-and-place environment settings."""
+
+    episode_length: int = 250
+    ctrl_dt: float = 0.02
+    action_scale: float = 0.3          # residual joint-target scale (arm)
+
+    # Cube spawn region (metres, world frame, in front of the arm along +x).
+    cube_low: Tuple[float, float] = (0.13, -0.05)
+    cube_high: Tuple[float, float] = (0.19, 0.05)
+    cube_z: float = 0.015              # cube half-size = resting height
+    # Place-target region (where the cube must be delivered).
+    target_low: Tuple[float, float] = (0.13, 0.08)
+    target_high: Tuple[float, float] = (0.19, 0.16)
+
+    # Reward shaping (staged: reach -> lift -> place).
+    reach_scale: float = 1.0
+    lift_scale: float = 3.0
+    lift_thresh: float = 0.06          # cube_z above which it counts as lifted
+    max_lift: float = 0.08
+    place_scale: float = 2.0
+    place_radius: float = 0.15         # normalization radius for place reward
+    success_thresh: float = 0.04       # xy distance to target for success
+    success_bonus: float = 5.0
+    ctrl_cost_scale: float = 0.01
+
+
+@dataclass
 class RenderConfig:
     """Batch camera rendering settings."""
 
@@ -90,12 +118,26 @@ class PPOConfig:
 
 @dataclass
 class Config:
+    # Which task to build: "franka_reach" | "so101_pick_place".
+    task: str = "franka_reach"
     env: EnvConfig = field(default_factory=EnvConfig)
+    so101: SO101Config = field(default_factory=SO101Config)
     render: RenderConfig = field(default_factory=RenderConfig)
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
     ppo: PPOConfig = field(default_factory=PPOConfig)
     exp_name: str = "franka_reach_vision_ppo"
     ckpt_dir: str = "checkpoints"
+
+    # Weights & Biases logging.
+    use_wandb: bool = False
+    wandb_project: str = "vision-rl"
+    wandb_entity: str | None = None
+    wandb_run_name: str | None = None
+
+    # Live GUI: tile training worlds in one MuJoCo window.
+    gui: bool = False
+    gui_realtime: bool = True          # throttle replay to real-time (watchable)
+    gui_envs: int = 16                 # max worlds to display (grid tiles)
 
     @property
     def batch_size(self) -> int:
@@ -115,4 +157,16 @@ def small_config() -> Config:
     cfg.ppo.total_env_steps = 200_000
     cfg.render.width = 48
     cfg.render.height = 48
+    return cfg
+
+
+def so101_config() -> Config:
+    """Default config for the SO-101 pick-and-place task."""
+    cfg = Config()
+    cfg.task = "so101_pick_place"
+    cfg.exp_name = "so101_pick_place_vision_ppo"
+    cfg.ppo.num_envs = 256
+    cfg.ppo.rollout_length = 32          # longer horizon for a multi-stage task
+    cfg.ppo.num_minibatches = 8
+    cfg.ppo.entropy_coef = 0.005
     return cfg

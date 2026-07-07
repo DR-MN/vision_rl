@@ -1,0 +1,59 @@
+<mujoco model="so101 pick place">
+  <include file="so101.xml"/>
+
+  <option timestep="0.005" iterations="10" ls_iterations="20"
+          integrator="implicitfast" cone="elliptic" impratio="10">
+    <flag eulerdamp="disable"/>
+  </option>
+
+  <custom>
+    <numeric data="24" name="max_contact_points"/>
+    <numeric data="8" name="max_geom_pairs"/>
+  </custom>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.4 0.4 0.4" specular="0 0 0"/>
+    <global azimuth="130" elevation="-30"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge"
+             rgb1="0.25 0.28 0.32" rgb2="0.18 0.20 0.24" markrgb="0.6 0.6 0.6"
+             width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="4 4" reflectance="0.1"/>
+    <material name="cube_mat" rgba="0.05 0.45 0.95 1"/>
+    <material name="pad_mat" rgba="0.95 0.75 0.10 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0.2 -0.2 0.8" dir="0 0 -1" directional="true"/>
+    <geom name="floor" type="plane" size="0 0 0.05" material="groundplane"
+          contype="1" conaffinity="1" condim="3"/>
+
+    <!-- Object to pick: a small cube with a free joint (in front of the arm, +x). -->
+    <body name="cube" pos="0.16 0.0 0.015">
+      <freejoint name="cube_free"/>
+      <geom name="cube" type="box" size="0.015 0.015 0.015" material="cube_mat"
+            contype="1" conaffinity="1" condim="4" friction="1.2 0.05 0.001"
+            solref="0.008 1" solimp="0.95 0.99 0.001" mass="0.03"/>
+    </body>
+
+    <!-- Place target: a flat mocap marker on the table (randomized each episode). -->
+    <body name="place_target" mocap="true" pos="0.16 0.12 0.001">
+      <geom name="place_target" type="cylinder" size="0.025 0.001" material="pad_mat"
+            contype="0" conaffinity="0"/>
+    </body>
+
+    <!-- Camera framing the workspace, looking from the -y side toward the arm. -->
+    <camera name="overhead_cam" pos="0.16 -0.40 0.35" xyaxes="1 0 0 0 0.62 0.78"/>
+  </worldbody>
+
+  <keyframe>
+    <!-- home: 6 robot dofs (arm + open gripper) then cube freejoint (xyz + quat).
+         Arm pose hovers the gripper pointing straight down above the cube. -->
+    <key name="home"
+      qpos="0 -0.8 0.9 1.338 0 1.4  0.16 0.0 0.015 1 0 0 0"
+      ctrl="0 -0.8 0.9 1.338 0 1.4"/>
+  </keyframe>
+</mujoco>

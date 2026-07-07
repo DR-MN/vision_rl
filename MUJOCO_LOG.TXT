@@ -1,0 +1,295 @@
+WARNING Tue Jul  7 12:34:13 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+timestep: parent has 0.002, child has 0.005, keeping parent value
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:34:43 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:34:43 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:34:43 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:34:43 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:34:43 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:34:43 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:34:43 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:34:43 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:34:43 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:19 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:19 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:19 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:19 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:19 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:19 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:19 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:19 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:19 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:40 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:40 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:40 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:40 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:40 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:40 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:40 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:40 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 12:40:40 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 14:04:26 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 14:04:26 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 14:04:26 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 14:04:26 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 14:04:26 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 14:04:26 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 14:04:26 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 14:04:26 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 14:04:26 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 14:06:06 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 14:06:06 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 14:06:06 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 14:06:06 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Tue Jul  7 14:06:06 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
