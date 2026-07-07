@@ -150,12 +150,63 @@ class CPUBatchRenderer(BatchRendererBase):
 
 
 # --------------------------------------------------------------------------- #
+# Warp (MJX built-in GPU batch renderer) backend
+# --------------------------------------------------------------------------- #
+class WarpBatchRenderer(BatchRendererBase):
+    """MJX's built-in GPU batch renderer (NVIDIA Warp raytracer).
+
+    Requires the physics to run in warp impl (`mjx.put_model(m, impl='warp')`),
+    so `mjx_model` here must be the *warp* model. Renders all worlds on-GPU,
+    keeping rollouts fully jitted. Needs `warp-lang==1.13.x` with mujoco 3.10
+    (newer warp moved internals the mjx integration imports).
+    """
+
+    backend = "warp"
+
+    def __init__(self, mj_model, mjx_model, cfg: RenderConfig, num_envs: int):
+        import mujoco
+        from mujoco.mjx._src import bvh, render, render_util
+        from mujoco.mjx.warp import io
+
+        self._bvh = bvh
+        self._rmod = render
+        self._rutil = render_util
+        self._mx = mjx_model                       # warp model
+        self._cam = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, cfg.camera)
+        if self._cam < 0:
+            raise ValueError(f"camera '{cfg.camera}' not found in model")
+        self._rc = io.create_render_context(
+            mjm=mj_model, nworld=num_envs, cam_res=(cfg.width, cfg.height),
+            use_textures=True, use_shadows=True,
+            render_rgb=True, render_depth=False, render_seg=False,
+            enabled_geom_groups=list(cfg.enabled_geom_groups),
+        )
+
+    def _do_render(self, data):
+        rcp = self._rc.pytree()
+        # Refit the ray-tracing BVH to current poses, then render (both vmapped).
+        data = jax.vmap(self._bvh.refit_bvh, in_axes=(None, 0, None))(
+            self._mx, data, rcp)
+        out = jax.vmap(self._rmod.render, in_axes=(None, 0, None))(
+            self._mx, data, rcp)                    # (rgb_packed, depth_packed)
+        rgb = jax.vmap(self._rutil.get_rgb, in_axes=(None, None, 0))(
+            rcp, self._cam, out[0])                 # [B, H, W, 3] float in [0,1]
+        return (jnp.clip(rgb, 0.0, 1.0) * 255.0).astype(jnp.uint8)
+
+    def init(self, data):
+        return None, self._do_render(data)
+
+    def render(self, token, data):
+        return token, self._do_render(data)
+
+
+# --------------------------------------------------------------------------- #
 # Factory
 # --------------------------------------------------------------------------- #
 def make_renderer(
     mj_model, mjx_model, cfg: RenderConfig, num_envs: int
 ) -> BatchRendererBase:
-    """Build a renderer, honouring cfg.backend ("madrona" | "cpu" | "auto")."""
+    """Build a renderer per cfg.backend ("warp" | "madrona" | "cpu" | "auto")."""
     backend = cfg.backend
     if backend == "auto":
         try:
@@ -165,6 +216,8 @@ def make_renderer(
         except Exception:
             backend = "cpu"
 
+    if backend == "warp":
+        return WarpBatchRenderer(mj_model, mjx_model, cfg, num_envs)
     if backend == "madrona":
         return MadronaBatchRenderer(mj_model, mjx_model, cfg, num_envs)
     if backend == "cpu":

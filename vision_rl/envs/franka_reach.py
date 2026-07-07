@@ -51,11 +51,15 @@ class EnvState:
 class FrankaReachEnv:
     """MJX Franka reach. Instances are cheap; the heavy model is shared."""
 
-    def __init__(self, cfg: EnvConfig | None = None):
+    def __init__(self, cfg: EnvConfig | None = None, impl: str = "jax",
+                 naconmax: int = 64):
         self.cfg = cfg or EnvConfig()
 
+        self.impl = impl                              # "jax" (default) or "warp"
+        self._naconmax = naconmax
         self.mj_model = mujoco.MjModel.from_xml_path(_SCENE_XML)
-        self.mjx_model = mjx.put_model(self.mj_model)
+        self.mjx_model = (mjx.put_model(self.mj_model, impl="warp")
+                          if impl == "warp" else mjx.put_model(self.mj_model))
         self.xml_path = _SCENE_XML
 
         # Control decimation: policy steps at ctrl_dt, physics at model timestep.
@@ -108,6 +112,11 @@ class FrankaReachEnv:
     # ------------------------------------------------------------------ #
     # Reset / step
     # ------------------------------------------------------------------ #
+    def _make_data(self):
+        if self.impl == "warp":
+            return mjx.make_data(self.mj_model, impl="warp", naconmax=self._naconmax)
+        return mjx.make_data(self.mjx_model)
+
     def reset(self, rng: jax.Array) -> EnvState:
         rng, q_rng, t_rng = jax.random.split(rng, 3)
 
@@ -115,7 +124,7 @@ class FrankaReachEnv:
         qpos = self._home_qpos.at[:_N_ARM].add(
             0.05 * jax.random.normal(q_rng, (_N_ARM,))
         )
-        data = mjx.make_data(self.mjx_model)
+        data = self._make_data()
         data = data.replace(qpos=qpos, ctrl=self._home_ctrl)
 
         # Randomize the visible target inside the workspace volume.

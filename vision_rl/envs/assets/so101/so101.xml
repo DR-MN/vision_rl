@@ -68,7 +68,6 @@
                 <body name="gripper_frame_link" pos="-0.0079 -0.000218121 -0.0981274" quat="1.32679e-06 0 1 0">
                   <inertial pos="0 0 0" mass="1e-09" diaginertia="0 0 0"/>
                   <site name="grasp" pos="0 0 0" size="0.006" rgba="0 1 0 0.6"/>
-                  <geom name="fixed_finger_pad" class="pad" type="box" size="0.004 0.010 0.014" pos="0.0 0.006 -0.012"/>
                 </body>
                 <body name="moving_jaw_so101_v1_link" pos="0.0202 0.0188 -0.0234" quat="0.707105 0.707108 -1.85362e-08 1.85363e-08">
                   <inertial pos="-0.00157495 -0.0300244 0.0192755" quat="0.695265 0.717965 -0.0245618 -0.0230097" mass="0.012" diaginertia="6.63582e-06 5.29092e-06 1.86523e-06"/>

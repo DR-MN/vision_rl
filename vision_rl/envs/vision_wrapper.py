@@ -86,7 +86,15 @@ class VisionVecEnv:
     # ------------------------------------------------------------------ #
     @staticmethod
     def _where_done(done, x_reset, x_keep):
-        """Select reset vs continued leaf per env (done broadcast over dims)."""
+        """Select reset vs continued leaf per env (done broadcast over dims).
+
+        Leaves whose leading dim isn't num_envs are left as-is: with the Warp
+        physics impl, some internal solver buffers are packed globally (not
+        per-world). Those are transient state that `step` recomputes, so it is
+        safe not to per-env-select them. No-op for the JAX impl (all per-env).
+        """
+        if x_keep.ndim == 0 or x_keep.shape[0] != done.shape[0]:
+            return x_keep
         mask = done.reshape((done.shape[0],) + (1,) * (x_keep.ndim - 1))
         return jnp.where(mask, x_reset, x_keep)
 

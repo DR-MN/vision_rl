@@ -221,7 +221,7 @@ def main():
     parser.add_argument("--num-envs", type=int, default=None)
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--backend", type=str, default=None,
-                        choices=["madrona", "cpu", "auto"])
+                        choices=["warp", "madrona", "cpu", "auto"])
     parser.add_argument("--wandb", action="store_true", help="log to Weights & Biases")
     parser.add_argument("--wandb-project", type=str, default=None)
     parser.add_argument("--wandb-name", type=str, default=None)

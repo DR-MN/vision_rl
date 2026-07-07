@@ -38,15 +38,21 @@ class SO101Config:
 
     episode_length: int = 250
     ctrl_dt: float = 0.02
-    action_scale: float = 0.3          # residual joint-target scale (arm)
+    action_scale: float = 1.0          # residual joint-target range (rad) around home;
+                                       # must be >=~0.7 so the arm can reach the pad
 
-    # Cube spawn region (metres, world frame, in front of the arm along +x).
-    cube_low: Tuple[float, float] = (0.13, -0.05)
-    cube_high: Tuple[float, float] = (0.19, 0.05)
-    cube_z: float = 0.015              # cube half-size = resting height
-    # Place-target region (where the cube must be delivered).
-    target_low: Tuple[float, float] = (0.13, 0.08)
-    target_high: Tuple[float, float] = (0.19, 0.16)
+    # Cube spawn region (metres, world frame) — spread across a good fraction of
+    # the arm's reachable workspace, not just right under the gripper.
+    cube_low: Tuple[float, float] = (0.12, -0.13)
+    cube_high: Tuple[float, float] = (0.26, 0.13)
+    cube_z: float = 0.01               # cube half-size = resting height (2 cm cube)
+    # Place-target region (sampled independently -> varied carry distances).
+    target_low: Tuple[float, float] = (0.12, -0.13)
+    target_high: Tuple[float, float] = (0.26, 0.13)
+
+    # Grasp-assist: attach the cube when the gripper is commanded closed within
+    # this distance of it (robust stand-in for brittle fingertip contact).
+    grasp_dist: float = 0.035
 
     # Reward shaping (staged: reach -> lift -> place).
     reach_scale: float = 1.0
@@ -58,6 +64,11 @@ class SO101Config:
     success_thresh: float = 0.04       # xy distance to target for success
     success_bonus: float = 5.0
     ctrl_cost_scale: float = 0.01
+
+    # Dense progress shaping: reward per-step *improvement* toward the goal
+    # (how much closer than the previous step), not just absolute distance.
+    reach_progress_scale: float = 10.0   # gripper approaching the cube
+    place_progress_scale: float = 10.0   # lifted cube approaching the pad
 
 
 @dataclass
@@ -113,7 +124,7 @@ class PPOConfig:
     seed: int = 0
     log_interval: int = 1              # iterations between console logs
     eval_interval: int = 50           # iterations between eval rollouts
-    ckpt_interval: int = 100          # iterations between checkpoints
+    ckpt_interval: int = 1000          # iterations between checkpoints
 
 
 @dataclass

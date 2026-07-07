@@ -43,17 +43,24 @@ class SO101State:
     target_pos: jax.Array    # [3] place-target world position
     cube_init_z: jax.Array   # scalar resting height (for lift measurement)
     was_lifted: jax.Array    # scalar 0/1, latched once cube is lifted
+    grasped: jax.Array       # scalar 0/1, cube currently attached to gripper
+    prev_reach: jax.Array    # last-step gripper->cube distance (progress shaping)
+    prev_place: jax.Array    # last-step cube->pad distance (progress shaping)
     step_count: jax.Array
     rng: jax.Array
     metrics: dict[str, Any]
 
 
 class SO101PickPlaceEnv:
-    def __init__(self, cfg: SO101Config | None = None):
+    def __init__(self, cfg: SO101Config | None = None, impl: str = "jax",
+                 naconmax: int = 64):
         self.cfg = cfg or SO101Config()
+        self.impl = impl                              # "jax" (default) or "warp"
+        self._naconmax = naconmax                     # warp global contact buffer
 
         self.mj_model = mujoco.MjModel.from_xml_path(_SCENE_XML)
-        self.mjx_model = mjx.put_model(self.mj_model)
+        self.mjx_model = (mjx.put_model(self.mj_model, impl="warp")
+                          if impl == "warp" else mjx.put_model(self.mj_model))
         self.xml_path = _SCENE_XML
 
         sim_dt = float(self.mj_model.opt.timestep)
@@ -96,6 +103,14 @@ class SO101PickPlaceEnv:
         return _N_ROBOT + _N_ROBOT + 3
 
     # ------------------------------------------------------------------ #
+    def _make_data(self):
+        # Warp impl requires the MjModel (not the mjx Model) + explicit impl.
+        # naconmax sizes the per-world contact buffer (table+cube need headroom
+        # or you get "narrowphase overflow" and dropped contacts).
+        if self.impl == "warp":
+            return mjx.make_data(self.mj_model, impl="warp", naconmax=self._naconmax)
+        return mjx.make_data(self.mjx_model)
+
     def _cube_pos(self, data):
         return data.qpos[self._cube_qadr : self._cube_qadr + 3]
 
@@ -123,7 +138,7 @@ class SO101PickPlaceEnv:
         qpos = qpos.at[self._cube_qadr : self._cube_qadr + 2].set(cube_xy)
         qpos = qpos.at[self._cube_qadr + 2].set(self.cfg.cube_z)
 
-        data = mjx.make_data(self.mjx_model)
+        data = self._make_data()
         data = data.replace(qpos=qpos, ctrl=self._home_ctrl)
 
         # Randomize the place target.
@@ -137,14 +152,18 @@ class SO101PickPlaceEnv:
         data = mjx.forward(self.mjx_model, data)
 
         obs = self._proprio(data)
-        d_reach = jnp.linalg.norm(self._grasp_pos(data) - self._cube_pos(data))
+        cube0 = self._cube_pos(data)
+        d_reach = jnp.linalg.norm(self._grasp_pos(data) - cube0)
+        d_place = jnp.linalg.norm(cube0[:2] - target_pos[:2])
         metrics = {"dist": d_reach, "success": jnp.float32(0.0),
-                   "cube_z": self._cube_pos(data)[2]}
+                   "cube_z": cube0[2], "grasped": jnp.float32(0.0)}
         return SO101State(
             data=data, obs=obs,
             reward=jnp.float32(0.0), done=jnp.float32(0.0),
             target_pos=target_pos, cube_init_z=jnp.float32(self.cfg.cube_z),
-            was_lifted=jnp.float32(0.0), step_count=jnp.int32(0),
+            was_lifted=jnp.float32(0.0), grasped=jnp.float32(0.0),
+            prev_reach=d_reach, prev_place=d_place,
+            step_count=jnp.int32(0),
             rng=rng, metrics=metrics,
         )
 
@@ -165,33 +184,69 @@ class SO101PickPlaceEnv:
             return mjx.step(self.mjx_model, d), None
         data, _ = jax.lax.scan(_substep, data, None, length=self.n_substeps)
 
-        cube = self._cube_pos(data)
         grasp = self._grasp_pos(data)
-        d_reach = jnp.linalg.norm(grasp - cube)
+        cube_phys = self._cube_pos(data)                 # cube from physics
+        d_reach = jnp.linalg.norm(grasp - cube_phys)
+
+        # --- Grasp-assist: attach the cube to the gripper when it is commanded
+        # closed and near the cube; release when the gripper opens. While
+        # attached, the cube is kinematically pinned to the grasp point. ---
+        grip_cmd = 0.5 * (action[_N_ARM] + 1.0)          # 0=closed .. 1=open
+        closing = grip_cmd < 0.5
+        opening = grip_cmd >= 0.5
+        near = d_reach < self.cfg.grasp_dist
+        grasped = jnp.maximum(state.grasped, (closing & near).astype(jnp.float32))
+        grasped = grasped * (1.0 - opening.astype(jnp.float32))
+
+        attach_xyz = grasp + jnp.array([0.0, 0.0, -0.005])
+        new_xyz = grasped * attach_xyz + (1.0 - grasped) * cube_phys
+        qpos = data.qpos.at[self._cube_qadr:self._cube_qadr + 3].set(new_xyz)
+        qvel = data.qvel.at[self._cube_vadr:self._cube_vadr + 6].mul(1.0 - grasped)
+        data = data.replace(qpos=qpos, qvel=qvel)
+
+        cube = self._cube_pos(data)                      # cube after attach
         cube_lift = cube[2] - state.cube_init_z
         lifted = (cube[2] > self.cfg.lift_thresh).astype(jnp.float32)
         was_lifted = jnp.maximum(state.was_lifted, lifted)
         d_place = jnp.linalg.norm(cube[:2] - state.target_pos[:2])
 
-        # Staged reward.
-        reach_r = -self.cfg.reach_scale * d_reach
+        # --- Dense progress shaping: improvement vs. the previous step. ---
+        # Positive when the gripper got closer to the cube this step.
+        reach_progress = state.prev_reach - d_reach
+        # Positive when a *lifted* cube got closer to the pad (gated so it can't
+        # be farmed by sliding the cube before picking it up).
+        place_progress = was_lifted * (state.prev_place - d_place)
+
+        # Once the cube is picked up, stop rewarding "reach the cube" so the
+        # objective cleanly hands off to lifting/placing (and the arm is free to
+        # release and move to the pad without a reach penalty).
+        reach_gate = 1.0 - was_lifted
+
+        # Staged reward (absolute terms) + progress terms.
+        reach_r = -self.cfg.reach_scale * d_reach * reach_gate
+        reach_pr = self.cfg.reach_progress_scale * reach_progress * reach_gate
         lift_r = self.cfg.lift_scale * jnp.clip(cube_lift, 0.0, self.cfg.max_lift)
         place_r = was_lifted * self.cfg.place_scale * (
             1.0 - jnp.clip(d_place, 0.0, self.cfg.place_radius) / self.cfg.place_radius
         )
+        place_pr = self.cfg.place_progress_scale * place_progress
         placed = (was_lifted > 0) & (d_place < self.cfg.success_thresh) & \
                  (cube[2] < state.cube_init_z + 0.02)
         success = placed.astype(jnp.float32)
         succ_r = self.cfg.success_bonus * success
         ctrl_cost = self.cfg.ctrl_cost_scale * jnp.sum(jnp.square(action))
-        reward = reach_r + lift_r + place_r + succ_r - ctrl_cost
+        reward = (reach_r + reach_pr + lift_r + place_r + place_pr
+                  + succ_r - ctrl_cost)
 
         step_count = state.step_count + 1
         done = (step_count >= self.cfg.episode_length).astype(jnp.float32)
 
         obs = self._proprio(data)
-        metrics = {"dist": d_reach, "success": success, "cube_z": cube[2]}
+        metrics = {"dist": d_reach, "success": success, "cube_z": cube[2],
+                   "grasped": grasped}
         return state.replace(
             data=data, obs=obs, reward=reward, done=done,
-            was_lifted=was_lifted, step_count=step_count, metrics=metrics,
+            was_lifted=was_lifted, grasped=grasped,
+            prev_reach=d_reach, prev_place=d_place,
+            step_count=step_count, metrics=metrics,
         )

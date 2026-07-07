@@ -54,9 +54,13 @@ class TiledMirror:
             _light.type = mujoco.mjtLightType.mjLIGHT_DIRECTIONAL
         except Exception:
             pass
+        # Match the scene's ground height so tiled tables/legs rest on it.
+        fid = mujoco.mj_name2id(single_model, mujoco.mjtObj.mjOBJ_GEOM, "floor")
+        floor_z = float(single_model.geom_pos[fid][2]) if fid >= 0 else 0.0
         floor = parent.worldbody.add_geom()
         floor.name = "tiled_floor"
         floor.type = mujoco.mjtGeom.mjGEOM_PLANE
+        floor.pos = [0.0, 0.0, floor_z]
         floor.size = [0, 0, 0.05]
         floor.rgba = [0.3, 0.32, 0.35, 1.0]
 

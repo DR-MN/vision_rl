@@ -24,17 +24,34 @@
     <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="4 4" reflectance="0.1"/>
     <material name="cube_mat" rgba="0.05 0.45 0.95 1"/>
     <material name="pad_mat" rgba="0.95 0.75 0.10 1"/>
+    <material name="table_mat" rgba="0.55 0.40 0.24 1"/>
+    <material name="leg_mat" rgba="0.30 0.22 0.14 1"/>
   </asset>
 
   <worldbody>
     <light pos="0.2 -0.2 0.8" dir="0 0 -1" directional="true"/>
-    <geom name="floor" type="plane" size="0 0 0.05" material="groundplane"
+    <!-- Ground, lowered so the table sits on it; table top is flush at z=0. -->
+    <geom name="floor" type="plane" pos="0 0 -0.4" size="0 0 0.05" material="groundplane"
           contype="1" conaffinity="1" condim="3"/>
 
+    <!-- Table: top surface at z=0 (the workspace). The arm mounts on it and the
+         cube rests on it, so all heights/rewards are unchanged. -->
+    <geom name="tabletop" type="box" pos="0.10 0.0 -0.02" size="0.30 0.28 0.02"
+          material="table_mat" contype="1" conaffinity="1" condim="3"
+          friction="1.0 0.02 0.001"/>
+    <geom name="leg1" type="box" pos="0.36 0.24 -0.21" size="0.02 0.02 0.18"
+          material="leg_mat" contype="0" conaffinity="0"/>
+    <geom name="leg2" type="box" pos="0.36 -0.24 -0.21" size="0.02 0.02 0.18"
+          material="leg_mat" contype="0" conaffinity="0"/>
+    <geom name="leg3" type="box" pos="-0.16 0.24 -0.21" size="0.02 0.02 0.18"
+          material="leg_mat" contype="0" conaffinity="0"/>
+    <geom name="leg4" type="box" pos="-0.16 -0.24 -0.21" size="0.02 0.02 0.18"
+          material="leg_mat" contype="0" conaffinity="0"/>
+
     <!-- Object to pick: a small cube with a free joint (in front of the arm, +x). -->
-    <body name="cube" pos="0.16 0.0 0.015">
+    <body name="cube" pos="0.16 0.0 0.01">
       <freejoint name="cube_free"/>
-      <geom name="cube" type="box" size="0.015 0.015 0.015" material="cube_mat"
+      <geom name="cube" type="box" size="0.01 0.01 0.01" material="cube_mat"
             contype="1" conaffinity="1" condim="4" friction="1.2 0.05 0.001"
             solref="0.008 1" solimp="0.95 0.99 0.001" mass="0.03"/>
     </body>
@@ -53,7 +70,7 @@
     <!-- home: 6 robot dofs (arm + open gripper) then cube freejoint (xyz + quat).
          Arm pose hovers the gripper pointing straight down above the cube. -->
     <key name="home"
-      qpos="0 -0.8 0.9 1.338 0 1.4  0.16 0.0 0.015 1 0 0 0"
+      qpos="0 -0.8 0.9 1.338 0 1.4  0.16 0.0 0.01 1 0 0 0"
       ctrl="0 -0.8 0.9 1.338 0 1.4"/>
   </keyframe>
 </mujoco>
