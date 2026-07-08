@@ -4,3 +4,7 @@ checkpoints/
 *.msgpack
 *.png
 .venv/
+
+# MuJoCo runtime log (regenerated on every run)
+MUJOCO_LOG.TXT
+wandb/
