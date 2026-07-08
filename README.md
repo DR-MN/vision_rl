@@ -28,10 +28,7 @@ python -m vision_rl.train --task so101_pick_place --backend cpu --num-envs 5 --g
 ## GPU batch rendering (Warp) — `--backend warp`
 
 CPU rendering is slow (host callback per step). MJX's built-in **Warp** GPU
-renderer runs physics + rendering on-device (~6–10× faster: ~350–385 sps vs
-~30–60 on a 4 GB RTX 3050 at 64 envs / 64×64). It lives in a **separate env**
-(`vision_rl_gpu`) pinned to `warp-lang==1.13.0` (mujoco 3.10 is broken with warp
-1.14), so the CPU env stays safe:
+renderer runs physics + rendering on-device (~6–10× faster)
 
 ```bash
 pip install "warp-lang==1.13.0"
