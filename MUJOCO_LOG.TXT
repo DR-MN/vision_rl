@@ -1,0 +1,35 @@
+WARNING Wed Jul  8 14:31:12 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Wed Jul  8 14:31:12 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Wed Jul  8 14:31:12 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Wed Jul  8 14:31:12 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+
+WARNING Wed Jul  8 14:31:12 2026: Attach conflict when attaching 'so101 pick place', policy is 'warning'
+iterations: parent has 100, child has 10, keeping parent value
+ls_iterations: parent has 50, child has 20, keeping parent value
+impratio: parent has 1, child has 10, keeping parent value
+integrator: parent has 0, child has 3, keeping parent value
+cone: parent has 0, child has 1, keeping parent value
+

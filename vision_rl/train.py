@@ -195,10 +195,20 @@ def make_train(cfg: Config) -> Callable[[], dict]:
                 if run is not None:
                     run.log({**metrics, "sps": sps}, step=steps)
 
-            if it % ppo.ckpt_interval == 0 or it == num_updates:
-                path = os.path.join(cfg.ckpt_dir, f"{cfg.exp_name}_it{it}.msgpack")
+            # Checkpoint: by env-steps if ckpt_every_steps set, else by iterations.
+            steps_done = it * cfg.batch_size
+            if ppo.ckpt_every_steps > 0:
+                save_now = (steps_done // ppo.ckpt_every_steps
+                            > (steps_done - cfg.batch_size) // ppo.ckpt_every_steps)
+                tag = f"step{steps_done}"
+            else:
+                save_now = (it % ppo.ckpt_interval == 0)
+                tag = f"it{it}"
+            if save_now or it == num_updates:
+                path = os.path.join(cfg.ckpt_dir, f"{cfg.exp_name}_{tag}.msgpack")
                 with open(path, "wb") as f:
                     f.write(serialization.to_bytes(train_state.params))
+                print(f"[ckpt] saved {os.path.basename(path)}")
 
         if run is not None:
             run.finish()
@@ -225,6 +235,8 @@ def main():
     parser.add_argument("--wandb", action="store_true", help="log to Weights & Biases")
     parser.add_argument("--wandb-project", type=str, default=None)
     parser.add_argument("--wandb-name", type=str, default=None)
+    parser.add_argument("--ckpt-steps", type=int, default=None,
+                        help="save a checkpoint every N env-steps (e.g. 100000)")
     parser.add_argument("--gui", action="store_true",
                         help="open a live window tiling training worlds")
     parser.add_argument("--gui-envs", type=int, default=None,
@@ -255,6 +267,8 @@ def main():
         cfg.wandb_project = args.wandb_project
     if args.wandb_name is not None:
         cfg.wandb_run_name = args.wandb_name
+    if args.ckpt_steps is not None:
+        cfg.ppo.ckpt_every_steps = args.ckpt_steps
     if args.gui:
         cfg.gui = True
     if args.gui_envs is not None:

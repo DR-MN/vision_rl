@@ -124,7 +124,8 @@ class PPOConfig:
     seed: int = 0
     log_interval: int = 1              # iterations between console logs
     eval_interval: int = 50           # iterations between eval rollouts
-    ckpt_interval: int = 1000          # iterations between checkpoints
+    ckpt_interval: int = 1000          # iterations between checkpoints (fallback)
+    ckpt_every_steps: int = 0          # env-steps between checkpoints (0 = use ckpt_interval)
 
 
 @dataclass
