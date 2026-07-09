@@ -152,6 +152,11 @@ def make_train(cfg: Config) -> Callable[[], dict]:
         train_state = create_train_state(
             init_rng, apply_fn, params_init, ppo, num_updates
         )
+        if cfg.resume_ckpt:
+            with open(cfg.resume_ckpt, "rb") as f:
+                params = serialization.from_bytes(train_state.params, f.read())
+            train_state = train_state.replace(params=params)
+            print(f"[resume] warm-started from {os.path.basename(cfg.resume_ckpt)}")
         n_params = sum(x.size for x in jax.tree_util.tree_leaves(train_state.params))
         print(f"[init] renderer backend = {env.renderer.backend}")
         print(f"[init] policy params = {n_params:,}")
@@ -237,6 +242,8 @@ def main():
     parser.add_argument("--wandb-name", type=str, default=None)
     parser.add_argument("--ckpt-steps", type=int, default=None,
                         help="save a checkpoint every N env-steps (e.g. 100000)")
+    parser.add_argument("--resume", type=str, default=None,
+                        help="warm-start params from a checkpoint .msgpack")
     parser.add_argument("--gui", action="store_true",
                         help="open a live window tiling training worlds")
     parser.add_argument("--gui-envs", type=int, default=None,
@@ -269,6 +276,8 @@ def main():
         cfg.wandb_run_name = args.wandb_name
     if args.ckpt_steps is not None:
         cfg.ppo.ckpt_every_steps = args.ckpt_steps
+    if args.resume is not None:
+        cfg.resume_ckpt = args.resume
     if args.gui:
         cfg.gui = True
     if args.gui_envs is not None:

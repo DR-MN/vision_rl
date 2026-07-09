@@ -107,6 +107,11 @@ def ppo_update(
     n = batch["advantages"].shape[0]
     mb_size = n // cfg.num_minibatches
 
+    # Replace any non-finite advantages/returns (from a blown-up env) with 0 so
+    # they contribute nothing rather than propagating NaNs into the gradient.
+    batch = {**batch,
+             "advantages": jnp.nan_to_num(batch["advantages"]),
+             "returns": jnp.nan_to_num(batch["returns"])}
     if cfg.normalize_advantages:
         adv = batch["advantages"]
         batch = {**batch, "advantages": (adv - adv.mean()) / (adv.std() + 1e-8)}
@@ -130,6 +135,11 @@ def ppo_update(
             cfg.entropy_coef,
             cfg.value_coef,
         )
+        # NaN guard: if a physics blow-up makes any gradient non-finite, zero it
+        # so that bad batch is skipped instead of poisoning the whole network
+        # (those envs recover on their next auto-reset).
+        grads = jax.tree_util.tree_map(
+            lambda g: jnp.where(jnp.isfinite(g), g, 0.0), grads)
         state = state.apply_gradients(grads=grads)
         return state, metrics
 

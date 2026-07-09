@@ -38,7 +38,7 @@ class SO101Config:
 
     episode_length: int = 250
     ctrl_dt: float = 0.02
-    action_scale: float = 1.0          # residual joint-target range (rad) around home;
+    action_scale: float = 0.6          # residual joint-target range (rad) around home;
                                        # must be >=~0.7 so the arm can reach the pad
 
     # Cube spawn region (metres, world frame) — spread across a good fraction of
@@ -139,6 +139,7 @@ class Config:
     ppo: PPOConfig = field(default_factory=PPOConfig)
     exp_name: str = "franka_reach_vision_ppo"
     ckpt_dir: str = "checkpoints"
+    resume_ckpt: str | None = None     # path to a params .msgpack to warm-start from
 
     # Weights & Biases logging.
     use_wandb: bool = False
