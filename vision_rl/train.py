@@ -42,6 +42,13 @@ def _init_wandb(cfg: Config, n_params: int):
     return run
 
 
+def _ckpt_step(path: str) -> int:
+    """Parse the cumulative step count from a checkpoint filename (…_step<N>…)."""
+    import re
+    m = re.search(r"step(\d+)", os.path.basename(path or ""))
+    return int(m.group(1)) if m else 0
+
+
 def _build_network(cfg: Config, action_size: int) -> ActorCritic:
     return ActorCritic(
         action_dim=action_size,
@@ -152,11 +159,14 @@ def make_train(cfg: Config) -> Callable[[], dict]:
         train_state = create_train_state(
             init_rng, apply_fn, params_init, ppo, num_updates
         )
+        resume_step = 0
         if cfg.resume_ckpt:
             with open(cfg.resume_ckpt, "rb") as f:
                 params = serialization.from_bytes(train_state.params, f.read())
             train_state = train_state.replace(params=params)
-            print(f"[resume] warm-started from {os.path.basename(cfg.resume_ckpt)}")
+            resume_step = _ckpt_step(cfg.resume_ckpt)   # continue step numbering
+            print(f"[resume] warm-started from {os.path.basename(cfg.resume_ckpt)} "
+                  f"(continuing step count from {resume_step:,})")
         n_params = sum(x.size for x in jax.tree_util.tree_leaves(train_state.params))
         print(f"[init] renderer backend = {env.renderer.backend}")
         print(f"[init] policy params = {n_params:,}")
@@ -186,8 +196,9 @@ def make_train(cfg: Config) -> Callable[[], dict]:
             if it % ppo.log_interval == 0:
                 metrics = jax.tree_util.tree_map(lambda x: float(x), metrics)
                 history.append({"iter": it, **metrics})
-                steps = it * cfg.batch_size
-                sps = steps / (time.time() - start)
+                session_steps = it * cfg.batch_size
+                steps = resume_step + session_steps          # cumulative (incl. resume)
+                sps = session_steps / (time.time() - start)  # this session's throughput
                 print(
                     f"[{it:>5}/{num_updates}] steps={steps:>10,} "
                     f"R={metrics['mean_reward']:+.3f} "
@@ -201,7 +212,7 @@ def make_train(cfg: Config) -> Callable[[], dict]:
                     run.log({**metrics, "sps": sps}, step=steps)
 
             # Checkpoint: by env-steps if ckpt_every_steps set, else by iterations.
-            steps_done = it * cfg.batch_size
+            steps_done = resume_step + it * cfg.batch_size
             if ppo.ckpt_every_steps > 0:
                 save_now = (steps_done // ppo.ckpt_every_steps
                             > (steps_done - cfg.batch_size) // ppo.ckpt_every_steps)

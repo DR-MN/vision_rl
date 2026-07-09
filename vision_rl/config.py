@@ -38,7 +38,7 @@ class SO101Config:
 
     episode_length: int = 250
     ctrl_dt: float = 0.02
-    action_scale: float = 0.6          # residual joint-target range (rad) around home;
+    action_scale: float = 0.75          # residual joint-target range (rad) around home;
                                        # must be >=~0.7 so the arm can reach the pad
 
     # Cube spawn region (metres, world frame) — spread across a good fraction of
@@ -48,7 +48,7 @@ class SO101Config:
     cube_z: float = 0.01               # cube half-size = resting height (2 cm cube)
     # Place-target region (sampled independently -> varied carry distances).
     target_low: Tuple[float, float] = (0.12, -0.13)
-    target_high: Tuple[float, float] = (0.26, 0.13)
+    target_high: Tuple[float, float] = (0.26, 0.12)
 
     # Grasp-assist: attach the cube when the gripper is commanded closed within
     # this distance of it (robust stand-in for brittle fingertip contact).
