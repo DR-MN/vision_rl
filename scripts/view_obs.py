@@ -74,9 +74,15 @@ def main():
     cfg.ppo.num_envs = max(args.envs, 1)
     if args.res:
         if args.policy:
-            print("WARNING: --policy expects the training resolution; a different "
-                  "--res will fail to load the checkpoint. Use --res without --policy.")
+            print("WARNING: --policy expects the resolution it was trained at; a "
+                  "different --res will fail to load the checkpoint.")
         cfg.render.width = cfg.render.height = args.res
+    elif args.policy:
+        from vision_rl.train import ckpt_render_res
+        res = ckpt_render_res(args.policy, cfg)
+        if res and res != cfg.render.width:
+            print(f"[ckpt] trained at {res}x{res} -> rendering at {res}")
+            cfg.render.width = cfg.render.height = res
     # sensible default upscale: big for tiny frames, none for high-res
     args.scale = args.scale or (1 if cfg.render.width >= 160 else 4)
 

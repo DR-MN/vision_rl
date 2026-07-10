@@ -33,6 +33,7 @@ class ActorCritic(nn.Module):
     normalize_pixels: bool = True
     hidden_sizes: Sequence[int] = (256, 256)
     init_log_std: float = -0.5
+    layer_norm: bool = True
 
     @nn.compact
     def __call__(self, obs: dict) -> tuple[DiagGaussian, jax.Array]:
@@ -42,6 +43,7 @@ class ActorCritic(nn.Module):
             strides=self.encoder_strides,
             features=self.encoder_features,
             normalize=self.normalize_pixels,
+            layer_norm=self.layer_norm,
         )
         img_embed = encoder(obs["pixels"])
 
@@ -51,9 +53,13 @@ class ActorCritic(nn.Module):
         else:
             h = img_embed
 
-        # Shared trunk, then separate actor / critic heads.
+        # Shared trunk, then separate actor / critic heads. tanh saturates for
+        # |pre-activation| >~ 4, where its derivative underflows and no gradient
+        # reaches the encoder, so normalise before squashing.
         for size in self.hidden_sizes:
             h = nn.Dense(size, kernel_init=_orthogonal(jnp.sqrt(2.0)))(h)
+            if self.layer_norm:
+                h = nn.LayerNorm()(h)
             h = nn.tanh(h)
 
         # Actor: small init on the last layer keeps early actions near zero.

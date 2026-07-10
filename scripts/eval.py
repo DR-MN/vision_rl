@@ -28,7 +28,7 @@ from flax import serialization
 
 from vision_rl.config import Config, so101_config
 from vision_rl.envs import VisionVecEnv
-from vision_rl.train import _build_network
+from vision_rl.train import _build_network, ckpt_render_res
 
 
 def main():
@@ -41,11 +41,19 @@ def main():
     ap.add_argument("--num-envs", type=int, default=64)
     ap.add_argument("--episodes", type=int, default=4,
                     help="episodes-worth of steps to evaluate per env")
+    ap.add_argument("--res", type=int, default=None,
+                    help="override the resolution inferred from the checkpoint")
     args = ap.parse_args()
 
     cfg = so101_config() if args.task == "so101_pick_place" else Config()
     cfg.render.backend = args.backend
     cfg.ppo.num_envs = args.num_envs
+
+    res = args.res or ckpt_render_res(args.ckpt, cfg)
+    if res and res != cfg.render.width:
+        print(f"[ckpt] trained at {res}x{res}; config default is "
+              f"{cfg.render.width}x{cfg.render.height} -> rendering at {res}")
+        cfg.render.width = cfg.render.height = res
 
     env = VisionVecEnv(cfg)
     net = _build_network(cfg, env.action_size)

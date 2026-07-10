@@ -95,6 +95,10 @@ class EncoderConfig:
     features: int = 256                        # embedding dim after the CNN
     frame_stack: int = 3                       # stacked frames -> temporal cue
     normalize_pixels: bool = True              # divide uint8 by 255 -> [0,1]
+    layer_norm: bool = True                    # LayerNorm before each tanh/relu;
+                                               # without it the trunk's tanh
+                                               # saturates and the CNN gets no
+                                               # gradient (see models/encoder.py)
 
 
 @dataclass
@@ -182,4 +186,7 @@ def so101_config() -> Config:
     cfg.ppo.rollout_length = 32          # longer horizon for a multi-stage task
     cfg.ppo.num_minibatches = 8
     cfg.ppo.entropy_coef = 0.005
+    # 84x84 -> 7x7x64 flatten, the shape the (8,4,3)/(4,2,1) stack was designed
+    # for. Resolves the 2 cm cube in ~6 px; 224 only inflates the encoder Dense.
+    cfg.render.width = cfg.render.height = 84
     return cfg

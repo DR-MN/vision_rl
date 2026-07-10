@@ -31,6 +31,7 @@ class VisionEncoder(nn.Module):
     strides: Sequence[int] = (4, 2, 1)
     features: int = 256
     normalize: bool = True
+    layer_norm: bool = True
 
     @nn.compact
     def __call__(self, pixels: jax.Array) -> jax.Array:
@@ -55,6 +56,14 @@ class VisionEncoder(nn.Module):
 
         x = x.reshape((x.shape[0], -1))               # flatten conv maps
         x = nn.Dense(self.features, kernel_init=_orthogonal())(x)
+        if self.layer_norm:
+            # The flatten is side**2 * channels[-1] wide (1024 at 64px, 36864 at
+            # 224px) and every entry is non-negative post-ReLU. Without this,
+            # gradient descent can push a large constant through that fan-in with
+            # a per-weight nudge far too small to show up in the weight norm,
+            # saturating the actor-critic trunk's tanh and starving the convs of
+            # gradient. Centring the embedding removes that degree of freedom.
+            x = nn.LayerNorm()(x)
         x = nn.relu(x)
 
         return x.reshape((*batch_dims, self.features))

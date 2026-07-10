@@ -49,6 +49,47 @@ def _ckpt_step(path: str) -> int:
     return int(m.group(1)) if m else 0
 
 
+# Resolutions to prefer when the encoder shape is ambiguous (see ckpt_render_res).
+_COMMON_RES = (48, 64, 84, 96, 112, 128, 160, 192, 224, 256, 320, 384, 448, 512)
+
+
+def _encoder_flat_dim(res: int, enc) -> int:
+    """Flatten width the conv stack produces for a square `res` input."""
+    side = res
+    for k, s in zip(enc.kernel_sizes, enc.strides):
+        side = (side - k) // s + 1
+        if side <= 0:
+            return 0
+    return side * side * enc.channels[-1]
+
+
+def ckpt_render_res(path: str, cfg: Config) -> int | None:
+    """Recover the image resolution a checkpoint was trained at.
+
+    The encoder's post-conv Dense takes `side**2 * channels[-1]` inputs, so its
+    shape identifies the input resolution. Loading params into a network built at
+    a different resolution raises ScopeParamShapeError, so scripts use this to
+    rebuild the env at the resolution the params expect.
+
+    Strided VALID convs floor-divide, so a band of resolutions (e.g. 220..227)
+    share one conv output size; any of them loads, but only the true one
+    reproduces the training pixels, so prefer a conventional value from the band.
+    Returns None if no resolution matches (i.e. a structurally different encoder).
+    """
+    with open(path, "rb") as f:
+        raw = serialization.msgpack_restore(f.read())
+    try:
+        want = np.shape(raw["params"]["VisionEncoder_0"]["Dense_0"]["kernel"])[0]
+    except (KeyError, TypeError, IndexError):
+        return None
+
+    cands = [r for r in range(16, 1025)
+             if _encoder_flat_dim(r, cfg.encoder) == want]
+    if not cands:
+        return None
+    return next((r for r in _COMMON_RES if r in cands), cands[0])
+
+
 def _build_network(cfg: Config, action_size: int) -> ActorCritic:
     return ActorCritic(
         action_dim=action_size,
@@ -58,6 +99,7 @@ def _build_network(cfg: Config, action_size: int) -> ActorCritic:
         encoder_features=cfg.encoder.features,
         normalize_pixels=cfg.encoder.normalize_pixels,
         init_log_std=cfg.ppo.init_log_std,
+        layer_norm=cfg.encoder.layer_norm,
     )
 
 
@@ -248,6 +290,8 @@ def main():
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--backend", type=str, default=None,
                         choices=["warp", "madrona", "cpu", "auto"])
+    parser.add_argument("--res", type=int, default=None,
+                        help="square render resolution (default 84 for so101)")
     parser.add_argument("--wandb", action="store_true", help="log to Weights & Biases")
     parser.add_argument("--wandb-project", type=str, default=None)
     parser.add_argument("--wandb-name", type=str, default=None)
@@ -279,6 +323,8 @@ def main():
         cfg.ppo.total_env_steps = args.steps
     if args.backend is not None:
         cfg.render.backend = args.backend
+    if args.res is not None:
+        cfg.render.width = cfg.render.height = args.res
     if args.wandb:
         cfg.use_wandb = True
     if args.wandb_project is not None:
