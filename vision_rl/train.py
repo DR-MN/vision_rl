@@ -99,6 +99,8 @@ def _build_network(cfg: Config, action_size: int) -> ActorCritic:
         encoder_features=cfg.encoder.features,
         normalize_pixels=cfg.encoder.normalize_pixels,
         init_log_std=cfg.ppo.init_log_std,
+        log_std_min=cfg.ppo.log_std_min,
+        log_std_max=cfg.ppo.log_std_max,
         layer_norm=cfg.encoder.layer_norm,
     )
 
@@ -138,6 +140,7 @@ def make_train(cfg: Config) -> Callable[[], dict]:
                 "done": next_vstate.env_state.done,
                 "dist": next_vstate.env_state.metrics["dist"],
                 "success": next_vstate.env_state.metrics["success"],
+                "table_hit": next_vstate.env_state.metrics["table_hit"],
                 # First n_gui worlds' state, for the optional tiled GUI mirror.
                 "qpos": next_vstate.env_state.data.qpos[:n_gui],
                 "mocap": next_vstate.env_state.data.mocap_pos[:n_gui],
@@ -185,6 +188,7 @@ def make_train(cfg: Config) -> Callable[[], dict]:
             "mean_reward": traj["reward"].mean(),
             "mean_dist": traj["dist"].mean(),
             "success_rate": traj["success"].mean(),
+            "table_hit_rate": traj["table_hit"].mean(),
         }
         # Rollout trajectory of the first n_gui worlds, for the tiled GUI (kept
         # on device until the driver pulls it; negligible cost when GUI is off).
@@ -246,6 +250,7 @@ def make_train(cfg: Config) -> Callable[[], dict]:
                     f"R={metrics['mean_reward']:+.3f} "
                     f"dist={metrics['mean_dist']:.3f} "
                     f"succ={metrics['success_rate']:.2f} "
+                    f"tbl={metrics['table_hit_rate']:.2f} "
                     f"kl={metrics['approx_kl']:.4f} "
                     f"ent={metrics['entropy']:+.2f} "
                     f"| {sps:,.0f} sps"
@@ -264,8 +269,14 @@ def make_train(cfg: Config) -> Callable[[], dict]:
                 tag = f"it{it}"
             if save_now or it == num_updates:
                 path = os.path.join(cfg.ckpt_dir, f"{cfg.exp_name}_{tag}.msgpack")
-                with open(path, "wb") as f:
+                # Atomic write: a power cut mid-write leaves the (untouched) old
+                # file intact instead of a truncated, unreadable checkpoint.
+                tmp = path + ".tmp"
+                with open(tmp, "wb") as f:
                     f.write(serialization.to_bytes(train_state.params))
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, path)
                 print(f"[ckpt] saved {os.path.basename(path)}")
 
         if run is not None:
@@ -292,6 +303,8 @@ def main():
                         choices=["warp", "madrona", "cpu", "auto"])
     parser.add_argument("--res", type=int, default=None,
                         help="square render resolution (default 84 for so101)")
+    parser.add_argument("--entropy-coef", type=float, default=None,
+                        help="override PPO entropy bonus coefficient")
     parser.add_argument("--wandb", action="store_true", help="log to Weights & Biases")
     parser.add_argument("--wandb-project", type=str, default=None)
     parser.add_argument("--wandb-name", type=str, default=None)
@@ -325,6 +338,8 @@ def main():
         cfg.render.backend = args.backend
     if args.res is not None:
         cfg.render.width = cfg.render.height = args.res
+    if args.entropy_coef is not None:
+        cfg.ppo.entropy_coef = args.entropy_coef
     if args.wandb:
         cfg.use_wandb = True
     if args.wandb_project is not None:

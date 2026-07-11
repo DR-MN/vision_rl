@@ -92,6 +92,13 @@ class SO101PickPlaceEnv:
         self._tgt_low = jnp.asarray(self.cfg.target_low)
         self._tgt_high = jnp.asarray(self.cfg.target_high)
 
+        # Table-contact penalty: the MJCF now has collision geoms on the arm, so
+        # the solver physically stops it at the table on BOTH backends. The warp
+        # backend does not expose data.contact to Python, so the *reward* signal
+        # uses the grasp-site height instead (see _table_dive). Clearance is
+        # measured above the table top at z=0.
+        self._table_clear = 0.03
+
     # ------------------------------------------------------------------ #
     @property
     def action_size(self) -> int:
@@ -123,6 +130,20 @@ class SO101PickPlaceEnv:
             data.qvel[:_N_ROBOT],
             self._grasp_pos(data),
         ])
+
+    def _table_dive(self, data, d_reach):
+        """Backend-agnostic proxy for the gripper diving into the table.
+
+        The warp Data does not expose `data.contact`, so instead of reading the
+        contact buffer we use the grasp-site height: a dive is when the gripper
+        is below the table clearance while NOT near the cube (i.e. pressing into
+        the table somewhere other than the object it is meant to pick). Uses only
+        the grasp-site position and reach distance, both available on jax + warp.
+        """
+        grasp_z = self._grasp_pos(data)[2]
+        below = jnp.clip(self._table_clear - grasp_z, 0.0, None)
+        away = (d_reach >= self.cfg.grasp_dist).astype(jnp.float32)
+        return ((below > 0.005) & (away > 0.5)).astype(jnp.float32)
 
     # ------------------------------------------------------------------ #
     def reset(self, rng: jax.Array) -> SO101State:
@@ -156,7 +177,8 @@ class SO101PickPlaceEnv:
         d_reach = jnp.linalg.norm(self._grasp_pos(data) - cube0)
         d_place = jnp.linalg.norm(cube0[:2] - target_pos[:2])
         metrics = {"dist": d_reach, "success": jnp.float32(0.0),
-                   "cube_z": cube0[2], "grasped": jnp.float32(0.0)}
+                   "cube_z": cube0[2], "grasped": jnp.float32(0.0),
+                   "table_hit": jnp.float32(0.0)}
         return SO101State(
             data=data, obs=obs,
             reward=jnp.float32(0.0), done=jnp.float32(0.0),
@@ -235,15 +257,19 @@ class SO101PickPlaceEnv:
         success = placed.astype(jnp.float32)
         succ_r = self.cfg.success_bonus * success
         ctrl_cost = self.cfg.ctrl_cost_scale * jnp.sum(jnp.square(action))
+        # Penalize the gripper diving into the table (collision is enabled in the
+        # MJCF; this is the learning signal so the policy stops trying to).
+        table_hit = self._table_dive(data, d_reach)
+        table_pen = self.cfg.table_penalty_scale * table_hit
         reward = (reach_r + reach_pr + lift_r + place_r + place_pr
-                  + succ_r - ctrl_cost)
+                  + succ_r - ctrl_cost - table_pen)
 
         step_count = state.step_count + 1
         done = (step_count >= self.cfg.episode_length).astype(jnp.float32)
 
         obs = self._proprio(data)
         metrics = {"dist": d_reach, "success": success, "cube_z": cube[2],
-                   "grasped": grasped}
+                   "grasped": grasped, "table_hit": table_hit}
         return state.replace(
             data=data, obs=obs, reward=reward, done=done,
             was_lifted=was_lifted, grasped=grasped,

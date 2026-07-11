@@ -52,7 +52,7 @@
     <body name="cube" pos="0.16 0.0 0.01">
       <freejoint name="cube_free"/>
       <geom name="cube" type="box" size="0.01 0.01 0.01" material="cube_mat"
-            contype="1" conaffinity="1" condim="4" friction="1.2 0.05 0.001"
+            contype="4" conaffinity="1" condim="4" friction="1.2 0.05 0.001"
             solref="0.008 1" solimp="0.95 0.99 0.001" mass="0.03"/>
     </body>
 

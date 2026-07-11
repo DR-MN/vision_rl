@@ -64,6 +64,10 @@ class SO101Config:
     success_thresh: float = 0.04       # xy distance to target for success
     success_bonus: float = 5.0
     ctrl_cost_scale: float = 0.01
+    # Penalty per step while an arm collision geom is pressing into the table/
+    # floor (sim-to-real: the real arm can't phase through the table). Collision
+    # is enabled in the MJCF; this teaches the policy to avoid it.
+    table_penalty_scale: float = 0.5
 
     # Dense progress shaping: reward per-step *improvement* toward the goal
     # (how much closer than the previous step), not just absolute distance.
@@ -122,8 +126,12 @@ class PPOConfig:
     anneal_lr: bool = True
     normalize_advantages: bool = True
 
-    # Continuous-action policy: state-independent log-std, initialised here.
+    # Continuous-action policy: state-independent log-std, initialised here and
+    # hard-clamped to [log_std_min, log_std_max] so noise can't collapse or run
+    # away (sigma in [0.05, 1.35]).
     init_log_std: float = -0.5
+    log_std_min: float = -3.0
+    log_std_max: float = 0.3
 
     seed: int = 0
     log_interval: int = 1              # iterations between console logs
@@ -185,7 +193,9 @@ def so101_config() -> Config:
     cfg.ppo.num_envs = 256
     cfg.ppo.rollout_length = 32          # longer horizon for a multi-stage task
     cfg.ppo.num_minibatches = 8
-    cfg.ppo.entropy_coef = 0.005
+    # Low entropy bonus: with the tanh-bounded mean + log_std clamp, the policy
+    # should sharpen (entropy fall) instead of the runaway noise seen before.
+    cfg.ppo.entropy_coef = 0.001
     # 84x84 -> 7x7x64 flatten, the shape the (8,4,3)/(4,2,1) stack was designed
     # for. Resolves the 2 cm cube in ~6 px; 224 only inflates the encoder Dense.
     cfg.render.width = cfg.render.height = 84

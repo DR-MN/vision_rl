@@ -33,6 +33,8 @@ class ActorCritic(nn.Module):
     normalize_pixels: bool = True
     hidden_sizes: Sequence[int] = (256, 256)
     init_log_std: float = -0.5
+    log_std_min: float = -3.0          # hard floor/ceiling on exploration noise:
+    log_std_max: float = 0.3           # sigma in [exp(-3), exp(0.3)] = [0.05, 1.35]
     layer_norm: bool = True
 
     @nn.compact
@@ -63,12 +65,18 @@ class ActorCritic(nn.Module):
             h = nn.tanh(h)
 
         # Actor: small init on the last layer keeps early actions near zero.
-        mean = nn.Dense(self.action_dim, kernel_init=_orthogonal(0.01))(h)
+        # tanh-squash the mean so it stays in the usable [-1, 1] action range and
+        # cannot run away to saturation (which starves the encoder of gradient and
+        # makes the deterministic policy a fixed, un-liftable posture).
+        mean = nn.tanh(nn.Dense(self.action_dim, kernel_init=_orthogonal(0.01))(h))
         log_std = self.param(
             "log_std",
             lambda _key, shape: jnp.full(shape, self.init_log_std),
             (self.action_dim,),
         )
+        # Clamp so exploration noise can neither collapse nor blow up regardless
+        # of the entropy-bonus / reward tug-of-war.
+        log_std = jnp.clip(log_std, self.log_std_min, self.log_std_max)
         std = jnp.exp(log_std) * jnp.ones_like(mean)
         pi = DiagGaussian(mean=mean, std=std)
 
