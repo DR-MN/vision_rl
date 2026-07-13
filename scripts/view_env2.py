@@ -1,0 +1,149 @@
+#!/usr/bin/env python
+"""Faithful SO-101 pick-and-place viewer — deterministic (deployment) policy.
+
+Why this exists (vs view_env.py):
+    view_env.py re-implements the dynamics with plain `mj_step` and does NOT
+    replicate GRASP-ASSIST — the kinematic attach that actually lifts the cube in
+    training. So even a good policy never picks anything in that viewer. This
+    script instead drives the *actual* training env (SO101PickPlaceEnv, which
+    includes grasp-assist, the staged reward, and identical dynamics) and mirrors
+    its state into a passive MuJoCo window. What you see matches training.
+
+Deterministic only: a deployed / real-world policy uses the mean action
+(`pi.mode()`), not the exploration noise used while training, so that is what we
+show — no stochastic flag.
+
+    MUJOCO_GL=glfw python scripts/view_env2.py \
+        --ckpt checkpoints/so101_pick_place_vision_ppo_step49804800.msgpack
+
+    # verify a checkpoint without a display (prints grasp/lift/success stats):
+    MUJOCO_GL=osmesa python scripts/view_env2.py --ckpt <ckpt> --headless 250
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+import time
+
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import mujoco
+import mujoco.viewer
+import jax
+import jax.numpy as jnp
+from flax import serialization
+
+from vision_rl.config import so101_config
+from vision_rl.envs.so101_pick_place import SO101PickPlaceEnv
+from vision_rl.train import _build_network, ckpt_render_res
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ckpt", required=True, help="trained params .msgpack")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--headless", type=int, default=0, metavar="STEPS",
+                    help="run without a window for STEPS steps, print pick stats")
+    args = ap.parse_args()
+
+    cfg = so101_config()
+    res = ckpt_render_res(args.ckpt, cfg) or cfg.render.width
+    cfg.render.width = cfg.render.height = res
+    k = cfg.encoder.frame_stack
+
+    # The real training env (CPU MJX): grasp-assist + exact staged dynamics.
+    env = SO101PickPlaceEnv(cfg.so101, impl="jax")
+
+    # Policy built exactly as in training (tanh mean, LayerNorm, log_std clamp).
+    net = _build_network(cfg, env.action_size)
+    dummy = {"pixels": jnp.zeros((1, res, res, k * 3), jnp.uint8),
+             "proprio": jnp.zeros((1, env.proprio_size), jnp.float32)}
+    params = net.init(jax.random.PRNGKey(0), dummy)
+    with open(args.ckpt, "rb") as f:
+        params = serialization.from_bytes(params, f.read())
+
+    reset = jax.jit(env.reset)
+    step = jax.jit(env.step)
+
+    @jax.jit
+    def policy(obs):
+        pi, _ = net.apply(params, obs)
+        return pi.mode()[0]                       # deterministic; single env -> [6]
+
+    # Classic model/data: renders the policy's camera *and* backs the window.
+    model = mujoco.MjModel.from_xml_path(os.path.abspath(env.xml_path))
+    data = mujoco.MjData(model)
+    cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, cfg.render.camera)
+    renderer = mujoco.Renderer(model, res, res)
+
+    def mirror(s):
+        """Copy MJX env state into the classic MjData for render + display."""
+        data.qpos[:] = np.asarray(s.data.qpos)
+        data.qvel[:] = np.asarray(s.data.qvel)
+        if model.nmocap:
+            data.mocap_pos[:] = np.asarray(s.data.mocap_pos).reshape(model.nmocap, 3)
+        mujoco.mj_forward(model, data)
+
+    frames = {"buf": None}
+
+    def get_obs(s):
+        renderer.update_scene(data, camera=cam)
+        rgb = renderer.render().astype(np.uint8)                 # [H,W,3]
+        b = frames["buf"]
+        frames["buf"] = (np.tile(rgb, (1, 1, k)) if b is None
+                         else np.concatenate([b[..., 3:], rgb], axis=-1))
+        return {"pixels": frames["buf"][None], "proprio": np.asarray(s.obs)[None]}
+
+    ep = cfg.so101.episode_length
+    key = jax.random.PRNGKey(args.seed)
+    s = reset(key)
+
+    # ---------------- headless verification ----------------
+    if args.headless:
+        grasped = lifted = success = False
+        n_ep = 0; picks = 0; lifts = 0; succ = 0
+        for i in range(args.headless):
+            mirror(s)
+            action = np.asarray(policy(get_obs(s)))
+            s = step(s, jnp.asarray(action))
+            grasped |= bool(s.grasped > 0.5)
+            lifted |= bool(s.metrics["cube_z"] > 0.06)
+            success |= bool(s.metrics["success"] > 0.5)
+            if bool(s.done) or (i + 1) % ep == 0:
+                n_ep += 1; picks += grasped; lifts += lifted; succ += success
+                key, sub = jax.random.split(key); s = reset(sub)
+                frames["buf"] = None
+                grasped = lifted = success = False
+        print(f"\n[headless] deterministic policy over {n_ep} episode(s), res={res}")
+        print(f"  grasped : {picks}/{n_ep}")
+        print(f"  lifted  : {lifts}/{n_ep}")
+        print(f"  placed  : {succ}/{n_ep}")
+        print("  (grasp-assist ON — this is what the training GUI shows)")
+        return
+
+    # ---------------- interactive window ----------------
+    print(f"[view_env2] deterministic (pi.mode) | res={res} | grasp-assist ON")
+    print("            press Tab / '[' / ']' to cycle cameras (incl. overhead_cam)")
+    with mujoco.viewer.launch_passive(model, data) as viewer:
+        t = 0
+        while viewer.is_running():
+            t0 = time.time()
+            mirror(s)                         # show the state the policy will act on
+            viewer.sync()
+            action = np.asarray(policy(get_obs(s)))
+            s = step(s, jnp.asarray(action))
+            t += 1
+            if bool(s.done) or t >= ep:
+                key, sub = jax.random.split(key)
+                s = reset(sub); frames["buf"] = None; t = 0
+            dt = env.cfg.ctrl_dt - (time.time() - t0)
+            if dt > 0:
+                time.sleep(dt)
+
+
+if __name__ == "__main__":
+    main()
