@@ -2,12 +2,11 @@
 """Faithful SO-101 pick-and-place viewer — deterministic (deployment) policy.
 
 Why this exists (vs view_env.py):
-    view_env.py re-implements the dynamics with plain `mj_step` and does NOT
-    replicate GRASP-ASSIST — the kinematic attach that actually lifts the cube in
-    training. So even a good policy never picks anything in that viewer. This
-    script instead drives the *actual* training env (SO101PickPlaceEnv, which
-    includes grasp-assist, the staged reward, and identical dynamics) and mirrors
-    its state into a passive MuJoCo window. What you see matches training.
+    view_env.py re-implements the dynamics with plain `mj_step` and can drift
+    from the real training env. This script instead drives the ACTUAL training
+    env (SO101PickPlaceEnv: menagerie SO-101, real physical grasping, staged
+    reward, identical dynamics) and mirrors its state into a passive MuJoCo
+    window, so what you see matches training exactly.
 
 Deterministic only: a deployed / real-world policy uses the mean action
 (`pi.mode()`), not the exploration noise used while training, so that is what we
@@ -55,7 +54,7 @@ def main():
     cfg.render.width = cfg.render.height = res
     k = cfg.encoder.frame_stack
 
-    # The real training env (CPU MJX): grasp-assist + exact staged dynamics.
+    # The real training env (CPU MJX): physical grasping + exact staged dynamics.
     env = SO101PickPlaceEnv(cfg.so101, impl="jax")
 
     # Policy built exactly as in training (tanh mean, LayerNorm, log_std clamp).
@@ -122,11 +121,11 @@ def main():
         print(f"  grasped : {picks}/{n_ep}")
         print(f"  lifted  : {lifts}/{n_ep}")
         print(f"  placed  : {succ}/{n_ep}")
-        print("  (grasp-assist ON — this is what the training GUI shows)")
+        print("  (physical grasping — the gripper must really close on the cube)")
         return
 
     # ---------------- interactive window ----------------
-    print(f"[view_env2] deterministic (pi.mode) | res={res} | grasp-assist ON")
+    print(f"[view_env2] deterministic (pi.mode) | res={res} | physical grasping")
     print("            press Tab / '[' / ']' to cycle cameras (incl. overhead_cam)")
     with mujoco.viewer.launch_passive(model, data) as viewer:
         t = 0

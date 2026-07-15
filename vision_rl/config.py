@@ -38,41 +38,41 @@ class SO101Config:
 
     episode_length: int = 250
     ctrl_dt: float = 0.02
-    action_scale: float = 0.75          # residual joint-target range (rad) around home;
-                                       # must be >=~0.7 so the arm can reach the pad
+    action_scale: float = 0.9           # residual joint-target range (rad) around
+                                        # home; covers the spawn region + descent
+                                        # (near corners need ~0.84 rad base yaw)
 
-    # Cube spawn region (metres, world frame) — spread across a good fraction of
-    # the arm's reachable workspace, not just right under the gripper.
-    cube_low: Tuple[float, float] = (0.12, -0.13)
-    cube_high: Tuple[float, float] = (0.26, 0.13)
-    cube_z: float = 0.01               # cube half-size = resting height (2 cm cube)
+    # Cube spawn region (metres) — reduced to the SOLID top-down-graspable zone
+    # confirmed by point-down IK reachability (menagerie SO-101).
+    cube_low: Tuple[float, float] = (0.14, -0.11)
+    cube_high: Tuple[float, float] = (0.22, 0.11)
+    cube_z: float = 0.015              # cube half-size = resting height (3 cm cube)
     # Place-target region (sampled independently -> varied carry distances).
-    target_low: Tuple[float, float] = (0.12, -0.13)
-    target_high: Tuple[float, float] = (0.26, 0.12)
+    target_low: Tuple[float, float] = (0.14, -0.11)
+    target_high: Tuple[float, float] = (0.22, 0.11)
 
-    # Grasp-assist: attach the cube when the gripper is commanded closed within
-    # this distance of it (robust stand-in for brittle fingertip contact).
-    grasp_dist: float = 0.035
+    # PHYSICAL grasping (no assist): the gripper must really close on the cube.
+    # `grasp_dist` gates the grasp-shaping bonus (fingers at the cube).
+    grasp_dist: float = 0.045
 
-    # Reward shaping (staged: reach -> lift -> place).
+    # Reward shaping (staged: reach -> grasp -> lift -> place). Kept modest so the
+    # return scale stays stable (the old scale=10 blew up the value loss).
     reach_scale: float = 1.0
-    lift_scale: float = 3.0
-    lift_thresh: float = 0.06          # cube_z above which it counts as lifted
-    max_lift: float = 0.08
+    grasp_bonus_scale: float = 0.5     # reward closing the jaw when at the cube
+    lift_scale: float = 4.0            # the real grasp signal (cube only rises if gripped)
+    lift_thresh: float = 0.05          # cube_z above which it counts as lifted (3.5cm off table)
+    max_lift: float = 0.10
     place_scale: float = 2.0
     place_radius: float = 0.15         # normalization radius for place reward
     success_thresh: float = 0.04       # xy distance to target for success
     success_bonus: float = 5.0
     ctrl_cost_scale: float = 0.01
-    # Penalty per step while an arm collision geom is pressing into the table/
-    # floor (sim-to-real: the real arm can't phase through the table). Collision
-    # is enabled in the MJCF; this teaches the policy to avoid it.
+    # Penalty per step while the gripper dives into the table away from the cube.
     table_penalty_scale: float = 0.5
 
-    # Dense progress shaping: reward per-step *improvement* toward the goal
-    # (how much closer than the previous step), not just absolute distance.
-    reach_progress_scale: float = 10.0   # gripper approaching the cube
-    place_progress_scale: float = 10.0   # lifted cube approaching the pad
+    # Dense progress shaping: reward per-step *improvement* toward the goal.
+    reach_progress_scale: float = 3.0    # gripper approaching the cube
+    place_progress_scale: float = 3.0    # lifted cube approaching the pad
 
 
 @dataclass

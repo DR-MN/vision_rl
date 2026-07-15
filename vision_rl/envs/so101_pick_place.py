@@ -27,7 +27,7 @@ from mujoco import mjx
 
 from vision_rl.config import SO101Config
 
-_ASSET_DIR = os.path.join(os.path.dirname(__file__), "assets", "so101")
+_ASSET_DIR = os.path.join(os.path.dirname(__file__), "assets", "so101_menagerie")
 _SCENE_XML = os.path.join(_ASSET_DIR, "so101_pick_place.xml")
 
 _N_ARM = 5           # controlled arm joints
@@ -67,7 +67,7 @@ class SO101PickPlaceEnv:
         self.n_substeps = max(1, round(self.cfg.ctrl_dt / sim_dt))
 
         m = self.mj_model
-        self._grasp_site = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "grasp")
+        self._grasp_site = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "gripperframe")
         cube_body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "cube")
         target_body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "place_target")
         self._target_mocap = int(m.body_mocapid[target_body])
@@ -177,7 +177,7 @@ class SO101PickPlaceEnv:
         d_reach = jnp.linalg.norm(self._grasp_pos(data) - cube0)
         d_place = jnp.linalg.norm(cube0[:2] - target_pos[:2])
         metrics = {"dist": d_reach, "success": jnp.float32(0.0),
-                   "cube_z": cube0[2], "grasped": jnp.float32(0.0),
+                   "cube_z": cube0[2], "lifted": jnp.float32(0.0),
                    "table_hit": jnp.float32(0.0)}
         return SO101State(
             data=data, obs=obs,
@@ -207,61 +207,50 @@ class SO101PickPlaceEnv:
         data, _ = jax.lax.scan(_substep, data, None, length=self.n_substeps)
 
         grasp = self._grasp_pos(data)
-        cube_phys = self._cube_pos(data)                 # cube from physics
-        d_reach = jnp.linalg.norm(grasp - cube_phys)
+        cube = self._cube_pos(data)                      # real physics, no assist
+        d_reach = jnp.linalg.norm(grasp - cube)
 
-        # --- Grasp-assist: attach the cube to the gripper when it is commanded
-        # closed and near the cube; release when the gripper opens. While
-        # attached, the cube is kinematically pinned to the grasp point. ---
-        grip_cmd = 0.5 * (action[_N_ARM] + 1.0)          # 0=closed .. 1=open
-        closing = grip_cmd < 0.5
-        opening = grip_cmd >= 0.5
-        near = d_reach < self.cfg.grasp_dist
-        grasped = jnp.maximum(state.grasped, (closing & near).astype(jnp.float32))
-        grasped = grasped * (1.0 - opening.astype(jnp.float32))
-
-        attach_xyz = grasp + jnp.array([0.0, 0.0, -0.005])
-        new_xyz = grasped * attach_xyz + (1.0 - grasped) * cube_phys
-        qpos = data.qpos.at[self._cube_qadr:self._cube_qadr + 3].set(new_xyz)
-        qvel = data.qvel.at[self._cube_vadr:self._cube_vadr + 6].mul(1.0 - grasped)
-        data = data.replace(qpos=qpos, qvel=qvel)
-
-        cube = self._cube_pos(data)                      # cube after attach
         cube_lift = cube[2] - state.cube_init_z
-        lifted = (cube[2] > self.cfg.lift_thresh).astype(jnp.float32)
-        was_lifted = jnp.maximum(state.was_lifted, lifted)
+        # Whether the cube is CURRENTLY off the table (physically held/lifted).
+        lifted_now = (cube[2] > self.cfg.lift_thresh).astype(jnp.float32)
+        # Latch: a real pick happened at some point this episode (success needs it).
+        ever_lifted = jnp.maximum(state.was_lifted, lifted_now)
         d_place = jnp.linalg.norm(cube[:2] - state.target_pos[:2])
 
-        # --- Dense progress shaping: improvement vs. the previous step. ---
-        # Positive when the gripper got closer to the cube this step.
+        placed = (ever_lifted > 0) & (d_place < self.cfg.success_thresh) & \
+                 (cube[2] < state.cube_init_z + 0.02)
+        success = placed.astype(jnp.float32)
+
+        # --- Re-grasp on slip ---
+        # Reach is active whenever the cube is neither currently held nor already
+        # placed, so a dropped/slipped cube pulls the arm back to pick it up
+        # again. Place shaping is active only while the cube is truly lifted.
+        reach_gate = 1.0 - jnp.maximum(lifted_now, success)
+        place_gate = lifted_now
+
         reach_progress = state.prev_reach - d_reach
-        # Positive when a *lifted* cube got closer to the pad (gated so it can't
-        # be farmed by sliding the cube before picking it up).
-        place_progress = was_lifted * (state.prev_place - d_place)
+        place_progress = place_gate * (state.prev_place - d_place)
 
-        # Once the cube is picked up, stop rewarding "reach the cube" so the
-        # objective cleanly hands off to lifting/placing (and the arm is free to
-        # release and move to the pad without a reach penalty).
-        reach_gate = 1.0 - was_lifted
+        # Gripper-closing command (action[5] < 0 -> closing); shaping so the jaw
+        # tends to close when the fingers are actually at the cube.
+        grip_closing = (0.5 * (action[_N_ARM] + 1.0) < 0.5).astype(jnp.float32)
+        near_cube = (d_reach < self.cfg.grasp_dist).astype(jnp.float32)
 
-        # Staged reward (absolute terms) + progress terms.
         reach_r = -self.cfg.reach_scale * d_reach * reach_gate
         reach_pr = self.cfg.reach_progress_scale * reach_progress * reach_gate
+        grasp_r = self.cfg.grasp_bonus_scale * near_cube * grip_closing * reach_gate
+        # The physical lift signal: the cube only rises if it is really gripped.
         lift_r = self.cfg.lift_scale * jnp.clip(cube_lift, 0.0, self.cfg.max_lift)
-        place_r = was_lifted * self.cfg.place_scale * (
+        place_r = place_gate * self.cfg.place_scale * (
             1.0 - jnp.clip(d_place, 0.0, self.cfg.place_radius) / self.cfg.place_radius
         )
         place_pr = self.cfg.place_progress_scale * place_progress
-        placed = (was_lifted > 0) & (d_place < self.cfg.success_thresh) & \
-                 (cube[2] < state.cube_init_z + 0.02)
-        success = placed.astype(jnp.float32)
         succ_r = self.cfg.success_bonus * success
         ctrl_cost = self.cfg.ctrl_cost_scale * jnp.sum(jnp.square(action))
-        # Penalize the gripper diving into the table (collision is enabled in the
-        # MJCF; this is the learning signal so the policy stops trying to).
+        # Penalize the gripper diving into the table away from the cube.
         table_hit = self._table_dive(data, d_reach)
         table_pen = self.cfg.table_penalty_scale * table_hit
-        reward = (reach_r + reach_pr + lift_r + place_r + place_pr
+        reward = (reach_r + reach_pr + grasp_r + lift_r + place_r + place_pr
                   + succ_r - ctrl_cost - table_pen)
 
         step_count = state.step_count + 1
@@ -269,10 +258,10 @@ class SO101PickPlaceEnv:
 
         obs = self._proprio(data)
         metrics = {"dist": d_reach, "success": success, "cube_z": cube[2],
-                   "grasped": grasped, "table_hit": table_hit}
+                   "lifted": lifted_now, "table_hit": table_hit}
         return state.replace(
             data=data, obs=obs, reward=reward, done=done,
-            was_lifted=was_lifted, grasped=grasped,
+            was_lifted=ever_lifted, grasped=lifted_now,
             prev_reach=d_reach, prev_place=d_place,
             step_count=step_count, metrics=metrics,
         )

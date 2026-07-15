@@ -1,0 +1,69 @@
+<mujoco model="so101 pick place (menagerie)">
+  <!-- Menagerie SO-101 robot (proper collision fingers). meshdir=assets is set
+       inside so101.xml; option/defaults/actuators come from it too. -->
+  <include file="so101.xml"/>
+
+  <!-- MJX/warp contact buffers: the full-body-collision robot + cube + table
+       generate many contacts; give them headroom. -->
+  <custom>
+    <numeric data="40" name="max_contact_points"/>
+    <numeric data="16" name="max_geom_pairs"/>
+  </custom>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.4 0.4 0.4" specular="0 0 0"/>
+    <global azimuth="130" elevation="-30"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge"
+             rgb1="0.25 0.28 0.32" rgb2="0.18 0.20 0.24" markrgb="0.6 0.6 0.6"
+             width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="4 4" reflectance="0.1"/>
+    <material name="cube_mat" rgba="0.05 0.45 0.95 1"/>
+    <material name="pad_mat" rgba="0.90 0.10 0.10 1"/>
+    <material name="table_mat" rgba="0.55 0.40 0.24 1"/>
+    <material name="leg_mat" rgba="0.30 0.22 0.14 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0.2 -0.2 0.8" dir="0 0 -1" directional="true"/>
+    <!-- Ground below the table; table top is flush at z=0 (the workspace). -->
+    <geom name="floor" type="plane" pos="0 0 -0.4" size="0 0 0.05" material="groundplane"
+          contype="1" conaffinity="1" condim="3"/>
+    <geom name="tabletop" type="box" pos="0.10 0.0 -0.02" size="0.30 0.28 0.02"
+          material="table_mat" contype="1" conaffinity="1" condim="3"
+          friction="1.0 0.02 0.001"/>
+    <geom name="leg1" type="box" pos="0.36 0.24 -0.21" size="0.02 0.02 0.18" material="leg_mat" contype="0" conaffinity="0"/>
+    <geom name="leg2" type="box" pos="0.36 -0.24 -0.21" size="0.02 0.02 0.18" material="leg_mat" contype="0" conaffinity="0"/>
+    <geom name="leg3" type="box" pos="-0.16 0.24 -0.21" size="0.02 0.02 0.18" material="leg_mat" contype="0" conaffinity="0"/>
+    <geom name="leg4" type="box" pos="-0.16 -0.24 -0.21" size="0.02 0.02 0.18" material="leg_mat" contype="0" conaffinity="0"/>
+
+    <!-- 3 cm cube to pick. contype=2/conaffinity=1 collides with the robot
+         (incl. gripper pads), table and floor — full physics, no grasp-assist. -->
+    <body name="cube" pos="0.18 0.0 0.015">
+      <freejoint name="cube_free"/>
+      <geom name="cube" type="box" size="0.015 0.015 0.015" material="cube_mat"
+            contype="2" conaffinity="1" condim="4" friction="1.0 0.05 0.001"
+            solref="0.01 1" solimp="0.95 0.99 0.001" mass="0.03"/>
+    </body>
+
+    <!-- Place target: flat mocap marker on the table (randomized each episode). -->
+    <body name="place_target" mocap="true" pos="0.18 0.08 0.001">
+      <geom name="place_target" type="cylinder" size="0.025 0.001" material="pad_mat"
+            contype="0" conaffinity="0"/>
+    </body>
+
+    <!-- Overhead-ish camera framing the workspace from the -y side. -->
+    <camera name="overhead_cam" pos="0.16 -0.42 0.34" xyaxes="1 0 0 0 0.62 0.78"/>
+  </worldbody>
+
+  <keyframe>
+    <!-- home: 5 arm joints + gripper(open) then cube freejoint (xyz + quat).
+         Arm hovers the gripper pointing down over the workspace centre. -->
+    <key name="home"
+      qpos="0.0896 -0.4398 0.4903 1.6006 1.5859 1.745  0.18 0.0 0.015 1 0 0 0"
+      ctrl="0.0896 -0.4398 0.4903 1.6006 1.5859 1.745"/>
+  </keyframe>
+</mujoco>
