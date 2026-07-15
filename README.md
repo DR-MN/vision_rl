@@ -34,7 +34,10 @@ renderer runs physics + rendering on-device (~6–10× faster)
 pip install "warp-lang==1.13.0"
 
 # no MUJOCO_GL needed (GPU raytracer, not GL)
-export PYTHONNOUSERSITE=1 XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_PYTHON_CLIENT_MEM_FRACTION=0.85
 python -m vision_rl.train --task so101_pick_place --backend warp --num-envs 10 --gui
+
+# can run with resolution and other parameters
+python -m vision_rl.train --task so101_pick_place --backend warp --res 84 --num-envs 350 --steps 50000000 --ckpt-steps 200000 --wandb --gui
+
 
 ```
