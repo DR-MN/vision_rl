@@ -52,11 +52,12 @@ class FrankaReachEnv:
     """MJX Franka reach. Instances are cheap; the heavy model is shared."""
 
     def __init__(self, cfg: EnvConfig | None = None, impl: str = "jax",
-                 naconmax: int = 64):
+                 naconmax: int = 64, njmax: int = 128):
         self.cfg = cfg or EnvConfig()
 
         self.impl = impl                              # "jax" (default) or "warp"
         self._naconmax = naconmax
+        self._njmax = njmax                           # warp per-world constraint buffer
         self.mj_model = mujoco.MjModel.from_xml_path(_SCENE_XML)
         self.mjx_model = (mjx.put_model(self.mj_model, impl="warp")
                           if impl == "warp" else mjx.put_model(self.mj_model))
@@ -114,7 +115,8 @@ class FrankaReachEnv:
     # ------------------------------------------------------------------ #
     def _make_data(self):
         if self.impl == "warp":
-            return mjx.make_data(self.mj_model, impl="warp", naconmax=self._naconmax)
+            return mjx.make_data(self.mj_model, impl="warp",
+                                  naconmax=self._naconmax, njmax=self._njmax)
         return mjx.make_data(self.mjx_model)
 
     def reset(self, rng: jax.Array) -> EnvState:

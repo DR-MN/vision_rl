@@ -14,10 +14,14 @@ def make_env(cfg):
     # Warp packs contacts into one global buffer sized ~num_envs * contacts/world;
     # give ~6/world of headroom so narrowphase never overflows.
     naconmax = max(64, 6 * cfg.ppo.num_envs)
+    # njmax is a PER-WORLD constraint buffer (unlike naconmax, it does not scale
+    # with num_envs). so101_pick_place's table+cube contacts need more headroom
+    # than the mjwarp default (~64) or you get "nefc overflow" / dropped constraints.
+    njmax = 128
     if task == "franka_reach":
-        return FrankaReachEnv(cfg.env, impl=impl, naconmax=naconmax)
+        return FrankaReachEnv(cfg.env, impl=impl, naconmax=naconmax, njmax=njmax)
     if task == "so101_pick_place":
-        return SO101PickPlaceEnv(cfg.so101, impl=impl, naconmax=naconmax)
+        return SO101PickPlaceEnv(cfg.so101, impl=impl, naconmax=naconmax, njmax=njmax)
     raise ValueError(f"unknown task: {task}")
 
 

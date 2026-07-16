@@ -53,10 +53,11 @@ class SO101State:
 
 class SO101PickPlaceEnv:
     def __init__(self, cfg: SO101Config | None = None, impl: str = "jax",
-                 naconmax: int = 64):
+                 naconmax: int = 64, njmax: int = 128):
         self.cfg = cfg or SO101Config()
         self.impl = impl                              # "jax" (default) or "warp"
         self._naconmax = naconmax                     # warp global contact buffer
+        self._njmax = njmax                           # warp per-world constraint buffer
 
         self.mj_model = mujoco.MjModel.from_xml_path(_SCENE_XML)
         self.mjx_model = (mjx.put_model(self.mj_model, impl="warp")
@@ -113,9 +114,12 @@ class SO101PickPlaceEnv:
     def _make_data(self):
         # Warp impl requires the MjModel (not the mjx Model) + explicit impl.
         # naconmax sizes the per-world contact buffer (table+cube need headroom
-        # or you get "narrowphase overflow" and dropped contacts).
+        # or you get "narrowphase overflow" and dropped contacts). njmax sizes
+        # the per-world constraint buffer (table+cube contacts need headroom
+        # or you get "nefc overflow" and dropped constraints).
         if self.impl == "warp":
-            return mjx.make_data(self.mj_model, impl="warp", naconmax=self._naconmax)
+            return mjx.make_data(self.mj_model, impl="warp",
+                                  naconmax=self._naconmax, njmax=self._njmax)
         return mjx.make_data(self.mjx_model)
 
     def _cube_pos(self, data):
