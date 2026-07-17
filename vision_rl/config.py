@@ -133,6 +133,15 @@ class PPOConfig:
     log_std_min: float = -3.0
     log_std_max: float = 0.3
 
+    # Warp physics buffers; None = size automatically from the scene (see
+    # envs/buffers.py). Set these only to override that sizing.
+    #   naconmax: GLOBAL contact buffer, summed over all worlds.
+    #   njmax:    PER-WORLD constraint rows; must cover the WORST world, which
+    #             is far above the average (rare gripper/cube/table pile-ups).
+    # Too small = warp silently drops contacts and the physics goes wrong.
+    naconmax: int | None = None
+    njmax: int | None = None
+
     seed: int = 0
     log_interval: int = 1              # iterations between console logs
     eval_interval: int = 50           # iterations between eval rollouts

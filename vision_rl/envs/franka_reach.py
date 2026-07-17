@@ -27,6 +27,7 @@ from flax import struct
 from mujoco import mjx
 
 from vision_rl.config import EnvConfig
+from vision_rl.envs.buffers import size_buffers
 
 _ASSET_DIR = os.path.join(os.path.dirname(__file__), "assets", "franka_emika_panda")
 _SCENE_XML = os.path.join(_ASSET_DIR, "franka_reach.xml")
@@ -52,13 +53,16 @@ class FrankaReachEnv:
     """MJX Franka reach. Instances are cheap; the heavy model is shared."""
 
     def __init__(self, cfg: EnvConfig | None = None, impl: str = "jax",
-                 naconmax: int = 64, njmax: int = 128):
+                 num_envs: int = 1, naconmax: int | None = None,
+                 njmax: int | None = None):
         self.cfg = cfg or EnvConfig()
 
         self.impl = impl                              # "jax" (default) or "warp"
-        self._naconmax = naconmax
-        self._njmax = njmax                           # warp per-world constraint buffer
         self.mj_model = mujoco.MjModel.from_xml_path(_SCENE_XML)
+        # See so101_pick_place / envs.buffers: warp needs these sized up front.
+        self._naconmax, self._njmax = (
+            size_buffers(self.mj_model, num_envs, naconmax, njmax)
+            if impl == "warp" else (naconmax or 0, njmax or 0))
         self.mjx_model = (mjx.put_model(self.mj_model, impl="warp")
                           if impl == "warp" else mjx.put_model(self.mj_model))
         self.xml_path = _SCENE_XML

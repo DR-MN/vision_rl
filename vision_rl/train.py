@@ -215,6 +215,11 @@ def make_train(cfg: Config) -> Callable[[], dict]:
                   f"(continuing step count from {resume_step:,})")
         n_params = sum(x.size for x in jax.tree_util.tree_leaves(train_state.params))
         print(f"[init] renderer backend = {env.renderer.backend}")
+        if env.env.impl == "warp":
+            base = env.env
+            print(f"[init] warp buffers: naconmax = {base._naconmax:,} "
+                  f"({base._naconmax // max(1, ppo.num_envs)}/world), "
+                  f"njmax = {base._njmax:,}/world")
         print(f"[init] policy params = {n_params:,}")
         print(f"[init] updates = {num_updates}, batch = {cfg.batch_size}, "
               f"minibatch = {cfg.minibatch_size}")
@@ -305,6 +310,12 @@ def main():
                         help="square render resolution (default 84 for so101)")
     parser.add_argument("--entropy-coef", type=float, default=None,
                         help="override PPO entropy bonus coefficient")
+    parser.add_argument("--naconmax", type=int, default=None,
+                        help="warp contact buffer, TOTAL across all worlds "
+                             "(default: sized from the scene)")
+    parser.add_argument("--njmax", type=int, default=None,
+                        help="warp constraint rows PER world; must cover the "
+                             "worst world (default: sized from the scene)")
     parser.add_argument("--wandb", action="store_true", help="log to Weights & Biases")
     parser.add_argument("--wandb-project", type=str, default=None)
     parser.add_argument("--wandb-name", type=str, default=None)
@@ -340,6 +351,10 @@ def main():
         cfg.render.width = cfg.render.height = args.res
     if args.entropy_coef is not None:
         cfg.ppo.entropy_coef = args.entropy_coef
+    if args.naconmax is not None:
+        cfg.ppo.naconmax = args.naconmax
+    if args.njmax is not None:
+        cfg.ppo.njmax = args.njmax
     if args.wandb:
         cfg.use_wandb = True
     if args.wandb_project is not None:

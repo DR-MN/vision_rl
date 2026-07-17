@@ -26,6 +26,7 @@ from flax import struct
 from mujoco import mjx
 
 from vision_rl.config import SO101Config
+from vision_rl.envs.buffers import size_buffers
 
 _ASSET_DIR = os.path.join(os.path.dirname(__file__), "assets", "so101_menagerie")
 _SCENE_XML = os.path.join(_ASSET_DIR, "so101_pick_place.xml")
@@ -53,13 +54,18 @@ class SO101State:
 
 class SO101PickPlaceEnv:
     def __init__(self, cfg: SO101Config | None = None, impl: str = "jax",
-                 naconmax: int = 64, njmax: int = 128):
+                 num_envs: int = 1, naconmax: int | None = None,
+                 njmax: int | None = None):
         self.cfg = cfg or SO101Config()
         self.impl = impl                              # "jax" (default) or "warp"
-        self._naconmax = naconmax                     # warp global contact buffer
-        self._njmax = njmax                           # warp per-world constraint buffer
 
         self.mj_model = mujoco.MjModel.from_xml_path(_SCENE_XML)
+        # Warp allocates contact/constraint storage up front and silently drops
+        # the overflow, so size it from this scene (None => probe + headroom).
+        # Only the warp impl reads these; skip the probe cost on the jax path.
+        self._naconmax, self._njmax = (
+            size_buffers(self.mj_model, num_envs, naconmax, njmax)
+            if impl == "warp" else (naconmax or 0, njmax or 0))
         self.mjx_model = (mjx.put_model(self.mj_model, impl="warp")
                           if impl == "warp" else mjx.put_model(self.mj_model))
         self.xml_path = _SCENE_XML
@@ -113,10 +119,8 @@ class SO101PickPlaceEnv:
     # ------------------------------------------------------------------ #
     def _make_data(self):
         # Warp impl requires the MjModel (not the mjx Model) + explicit impl.
-        # naconmax sizes the per-world contact buffer (table+cube need headroom
-        # or you get "narrowphase overflow" and dropped contacts). njmax sizes
-        # the per-world constraint buffer (table+cube contacts need headroom
-        # or you get "nefc overflow" and dropped constraints).
+        # Buffers are sized in __init__; see envs/buffers.py for the scoping
+        # (naconmax is global, njmax is per-world) and why undersizing is silent.
         if self.impl == "warp":
             return mjx.make_data(self.mj_model, impl="warp",
                                   naconmax=self._naconmax, njmax=self._njmax)
