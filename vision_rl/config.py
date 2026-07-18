@@ -206,9 +206,11 @@ def so101_config() -> Config:
     cfg.ppo.num_envs = 256
     cfg.ppo.rollout_length = 32          # longer horizon for a multi-stage task
     cfg.ppo.num_minibatches = 8
-    # Low entropy bonus: with the tanh-bounded mean + log_std clamp, the policy
-    # should sharpen (entropy fall) instead of the runaway noise seen before.
-    cfg.ppo.entropy_coef = 0.001
+    # Entropy bonus: 0.001 was too weak — exploration collapsed (entropy -> -6.8,
+    # sigma near its floor) by mid-training, before the grasp->carry->place skill
+    # could consolidate. 0.02 keeps exploration alive deeper into training while
+    # still letting the policy sharpen late for precise (4 cm) placement.
+    cfg.ppo.entropy_coef = 0.02
     # 84x84 -> 7x7x64 flatten, the shape the (8,4,3)/(4,2,1) stack was designed
     # for. Resolves the 2 cm cube in ~6 px; 224 only inflates the encoder Dense.
     cfg.render.width = cfg.render.height = 84
