@@ -124,6 +124,10 @@ class PPOConfig:
 
     learning_rate: float = 3e-4
     anneal_lr: bool = True
+    # Anneal the LR DOWN to this fraction of the initial rate (not to 0), so
+    # late-training discoveries can still be reinforced. Fully-zero LR froze
+    # past runs right when success first appeared (~75-85% through training).
+    lr_final_frac: float = 0.30
     normalize_advantages: bool = True
 
     # Continuous-action policy: state-independent log-std, initialised here and

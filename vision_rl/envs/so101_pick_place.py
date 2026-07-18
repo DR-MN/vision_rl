@@ -236,17 +236,25 @@ class SO101PickPlaceEnv:
         reach_gate = 1.0 - jnp.maximum(lifted_now, success)
         place_gate = lifted_now
 
-        reach_progress = state.prev_reach - d_reach
-        place_progress = place_gate * (state.prev_place - d_place)
-
         # Gripper-closing command (action[5] < 0 -> closing); shaping so the jaw
         # tends to close when the fingers are actually at the cube.
         grip_closing = (0.5 * (action[_N_ARM] + 1.0) < 0.5).astype(jnp.float32)
         near_cube = (d_reach < self.cfg.grasp_dist).astype(jnp.float32)
+        # "Held" proxy: fingers at the cube AND jaw commanded closed. Keeps the
+        # grasp bonus alive through the lift and opens carry shaping as soon as
+        # the cube is grasped, so reach->grasp->lift->carry has no reward cliff.
+        held = near_cube * grip_closing
+
+        reach_progress = state.prev_reach - d_reach
+        # Carry progress pays whenever the cube is HELD (was: only above the 5 cm
+        # lift line), so moving a grasped cube toward the pad always gives signal.
+        place_progress = held * (state.prev_place - d_place)
 
         reach_r = -self.cfg.reach_scale * d_reach * reach_gate
         reach_pr = self.cfg.reach_progress_scale * reach_progress * reach_gate
-        grasp_r = self.cfg.grasp_bonus_scale * near_cube * grip_closing * reach_gate
+        # Grasp bonus stays on while the cube is held, even above the 5 cm lift
+        # line (was gated by reach_gate -> a -0.5 cliff that discouraged lifting).
+        grasp_r = self.cfg.grasp_bonus_scale * held
         # The physical lift signal: the cube only rises if it is really gripped.
         lift_r = self.cfg.lift_scale * jnp.clip(cube_lift, 0.0, self.cfg.max_lift)
         place_r = place_gate * self.cfg.place_scale * (

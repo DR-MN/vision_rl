@@ -32,9 +32,12 @@ def create_train_state(
     params = params_init_fn(rng)
 
     if cfg.anneal_lr:
-        # One "decay unit" per gradient step across the whole run.
+        # One "decay unit" per gradient step across the whole run. Anneal DOWN to
+        # a floor (lr_final_frac * lr), not 0, so the policy can still learn late
+        # in training when success tends to first appear.
         total_grad_steps = num_updates * cfg.update_epochs * cfg.num_minibatches
-        lr = optax.linear_schedule(cfg.learning_rate, 0.0, total_grad_steps)
+        end_lr = cfg.learning_rate * cfg.lr_final_frac
+        lr = optax.linear_schedule(cfg.learning_rate, end_lr, total_grad_steps)
     else:
         lr = cfg.learning_rate
 
