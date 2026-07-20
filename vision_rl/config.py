@@ -210,7 +210,7 @@ def so101_config() -> Config:
     # sigma near its floor) by mid-training, before the grasp->carry->place skill
     # could consolidate. 0.02 keeps exploration alive deeper into training while
     # still letting the policy sharpen late for precise (4 cm) placement.
-    cfg.ppo.entropy_coef = 0.02
+    cfg.ppo.entropy_coef = 0.005
     # 84x84 -> 7x7x64 flatten, the shape the (8,4,3)/(4,2,1) stack was designed
     # for. Resolves the 2 cm cube in ~6 px; 224 only inflates the encoder Dense.
     cfg.render.width = cfg.render.height = 84
