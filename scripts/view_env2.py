@@ -34,11 +34,9 @@ import mujoco
 import mujoco.viewer
 import jax
 import jax.numpy as jnp
-from flax import serialization
-
-from vision_rl.config import so101_config
+from vision_rl import checkpoint as ckpt_io
 from vision_rl.envs.so101_pick_place import SO101PickPlaceEnv
-from vision_rl.train import _build_network, ckpt_render_res
+from vision_rl.train import _build_network
 
 
 def main():
@@ -49,9 +47,9 @@ def main():
                     help="run without a window for STEPS steps, print pick stats")
     args = ap.parse_args()
 
-    cfg = so101_config()
-    res = ckpt_render_res(args.ckpt, cfg) or cfg.render.width
-    cfg.render.width = cfg.render.height = res
+    ck = ckpt_io.load(args.ckpt)
+    cfg = ck.config                      # resolution, reward shaping, action scale
+    res = cfg.render.width
     k = cfg.encoder.frame_stack
 
     # The real training env (CPU MJX): physical grasping + exact staged dynamics.
@@ -61,9 +59,7 @@ def main():
     net = _build_network(cfg, env.action_size)
     dummy = {"pixels": jnp.zeros((1, res, res, k * 3), jnp.uint8),
              "proprio": jnp.zeros((1, env.proprio_size), jnp.float32)}
-    params = net.init(jax.random.PRNGKey(0), dummy)
-    with open(args.ckpt, "rb") as f:
-        params = serialization.from_bytes(params, f.read())
+    params = ck.restore_params(net.init(jax.random.PRNGKey(0), dummy))
 
     reset = jax.jit(env.reset)
     step = jax.jit(env.step)

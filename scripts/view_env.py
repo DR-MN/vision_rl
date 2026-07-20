@@ -52,27 +52,18 @@ TASKS = {
 }
 
 
-def _load_policy(cfg, path, action_size, proprio_size, pixels_shape):
+def _load_policy(ck, action_size, proprio_size, pixels_shape):
     import jax
     import jax.numpy as jnp
-    from flax import serialization
 
-    from vision_rl.models import ActorCritic
+    from vision_rl.train import _build_network
 
-    net = ActorCritic(
-        action_dim=action_size,
-        encoder_channels=cfg.encoder.channels,
-        encoder_kernels=cfg.encoder.kernel_sizes,
-        encoder_strides=cfg.encoder.strides,
-        encoder_features=cfg.encoder.features,
-        normalize_pixels=cfg.encoder.normalize_pixels,
-        init_log_std=cfg.ppo.init_log_std,
-    )
+    # _build_network is the same constructor training uses, so options like
+    # layer_norm and the log_std clamp can't silently drift out of sync here.
+    net = _build_network(ck.config, action_size)
     dummy = {"pixels": jnp.zeros((1, *pixels_shape), jnp.uint8),
              "proprio": jnp.zeros((1, proprio_size), jnp.float32)}
-    params = net.init(jax.random.PRNGKey(0), dummy)
-    with open(path, "rb") as f:
-        params = serialization.from_bytes(params, f.read())
+    params = ck.restore_params(net.init(jax.random.PRNGKey(0), dummy))
 
     @jax.jit
     def act(params, obs):
@@ -89,8 +80,18 @@ def main():
     ap.add_argument("--policy", type=str, default=None)
     args = ap.parse_args()
 
+    # With --policy the checkpoint is the source of truth for task and config;
+    # without it, --task selects a default one for a random/scripted rollout.
+    ck = None
+    if args.policy:
+        from vision_rl import checkpoint as ckpt_io
+        ck = ckpt_io.load(args.policy)
+        cfg = ck.config
+        args.task = cfg.task            # keeps the T/ctrl_dt lookups below honest
+    else:
+        cfg = so101_config() if args.task == "so101_pick_place" else Config()
+
     T = TASKS[args.task]
-    cfg = so101_config() if args.task == "so101_pick_place" else Config()
     rng = np.random.default_rng(0)
     n_arm = T["n_arm"]
 
@@ -136,7 +137,7 @@ def main():
         pixels_shape = (cfg.render.height, cfg.render.width, cfg.encoder.frame_stack * 3)
         proprio_size = n_robot * 2 + 3
         action_size = n_arm + (1 if T["gripper_action"] else 0)
-        policy = _load_policy(cfg, args.policy, action_size, proprio_size, pixels_shape)
+        policy = _load_policy(ck, action_size, proprio_size, pixels_shape)
         renderer = mujoco.Renderer(model, cfg.render.height, cfg.render.width)
 
     def get_obs():

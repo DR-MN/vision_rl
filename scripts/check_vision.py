@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Diagnose whether a trained policy actually USES the camera.
+"""Diagnose whether a trained policy actually USES the camera or doing the memorized actions..
 
 The cube/target positions are only observable through pixels (they are not in
 proprio). So if the policy is vision-conditioned, its action must change when
@@ -11,7 +11,7 @@ Reports:
   * |corr(action, cube_x/y)|  -> ~0 means the action ignores where the cube is
 
 Example:
-  python scripts/check_vision.py --task so101_pick_place --backend warp \
+  python scripts/check_vision.py --backend warp \
       --ckpt checkpoints/so101_pick_place_vision_ppo_step44000000.msgpack
 """
 
@@ -26,39 +26,27 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import jax
-from flax import serialization
-
-from vision_rl.config import Config, so101_config
+from vision_rl import checkpoint as ckpt_io
 from vision_rl.envs import VisionVecEnv
-from vision_rl.train import _build_network, ckpt_render_res
+from vision_rl.train import _build_network
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--task", choices=["franka_reach", "so101_pick_place"],
-                    default="so101_pick_place")
+    # No --task / --res: both are recorded in the checkpoint.
     ap.add_argument("--backend", choices=["warp", "cpu"], default="cpu")
     ap.add_argument("--ckpt", type=str, required=True)
     ap.add_argument("--envs", type=int, default=64, help="worlds (each a different cube pos)")
-    ap.add_argument("--res", type=int, default=None,
-                    help="override the resolution inferred from the checkpoint")
     args = ap.parse_args()
 
-    cfg = so101_config() if args.task == "so101_pick_place" else Config()
+    ck = ckpt_io.load(args.ckpt)
+    cfg = ck.config
     cfg.render.backend = args.backend
     cfg.ppo.num_envs = args.envs
 
-    res = args.res or ckpt_render_res(args.ckpt, cfg)
-    if res and res != cfg.render.width:
-        print(f"[ckpt] trained at {res}x{res}; config default is "
-              f"{cfg.render.width}x{cfg.render.height} -> rendering at {res}")
-        cfg.render.width = cfg.render.height = res
-
     env = VisionVecEnv(cfg)
     net = _build_network(cfg, env.action_size)
-    params = net.init(jax.random.PRNGKey(0), env.sample_obs())
-    with open(args.ckpt, "rb") as f:
-        params = serialization.from_bytes(params, f.read())
+    params = ck.restore_params(net.init(jax.random.PRNGKey(0), env.sample_obs()))
 
     # Each world resets with a DIFFERENT random cube/target; arm starts ~same pose.
     vs = env.reset(jax.random.PRNGKey(7))

@@ -6,9 +6,9 @@ env for a number of steps and reports success rate / reward / distance. Works
 with any renderer backend (cpu / warp). For a visual rollout use view_env.py.
 
 Examples:
-    python scripts/eval.py --task so101_pick_place --backend warp \
-        --ckpt checkpoints/so101_pick_place_vision_ppo_it500.msgpack --num-envs 64
-    python scripts/eval.py --task franka_reach --backend cpu \
+    python scripts/eval.py --backend warp --num-envs 64 \
+        --ckpt checkpoints/so101_pick_place_vision_ppo_it500.msgpack
+    python scripts/eval.py --backend cpu \
         --ckpt checkpoints/franka_reach_vision_ppo_it500.msgpack
 """
 
@@ -24,17 +24,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import jax
 import jax.numpy as jnp
-from flax import serialization
-
-from vision_rl.config import Config, so101_config
+from vision_rl import checkpoint as ckpt_io
 from vision_rl.envs import VisionVecEnv
-from vision_rl.train import _build_network, ckpt_render_res
+from vision_rl.train import _build_network
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--task", choices=["franka_reach", "so101_pick_place"],
-                    default="so101_pick_place")
+    # No --task: the checkpoint records which task it was trained on.
     ap.add_argument("--backend", choices=["warp", "cpu", "madrona", "auto"],
                     default="cpu")
     ap.add_argument("--ckpt", type=str, required=True, help="msgpack params file")
@@ -45,25 +42,26 @@ def main():
                     help="override the resolution inferred from the checkpoint")
     args = ap.parse_args()
 
-    cfg = so101_config() if args.task == "so101_pick_place" else Config()
+    # Every setting that shaped the policy -- task, resolution, reward shaping,
+    # episode length -- comes from the checkpoint, so eval reproduces training
+    # conditions exactly. Only backend and world count are ours to pick.
+    ck = ckpt_io.load(args.ckpt)
+    cfg = ck.config
     cfg.render.backend = args.backend
     cfg.ppo.num_envs = args.num_envs
-
-    res = args.res or ckpt_render_res(args.ckpt, cfg)
-    if res and res != cfg.render.width:
-        print(f"[ckpt] trained at {res}x{res}; config default is "
-              f"{cfg.render.width}x{cfg.render.height} -> rendering at {res}")
-        cfg.render.width = cfg.render.height = res
+    if args.res:
+        cfg.render.width = cfg.render.height = args.res
+        print(f"[eval] WARNING: overriding resolution to {args.res}x{args.res}; "
+              f"the policy was trained at {ck.config.render.width}")
 
     env = VisionVecEnv(cfg)
     net = _build_network(cfg, env.action_size)
-    params = net.init(jax.random.PRNGKey(0), env.sample_obs())
-    with open(args.ckpt, "rb") as f:
-        params = serialization.from_bytes(params, f.read())
-    print(f"[eval] task={args.task} backend={env.renderer.backend} "
-          f"num_envs={args.num_envs} ckpt={os.path.basename(args.ckpt)}")
+    params = ck.restore_params(net.init(jax.random.PRNGKey(0), env.sample_obs()))
+    print(f"[eval] task={cfg.task} backend={env.renderer.backend} "
+          f"num_envs={args.num_envs} res={cfg.render.width} "
+          f"ckpt={os.path.basename(args.ckpt)} @ {ck.step:,} steps")
 
-    ep_len = (cfg.so101.episode_length if args.task == "so101_pick_place"
+    ep_len = (cfg.so101.episode_length if cfg.task == "so101_pick_place"
               else cfg.env.episode_length)
     n_steps = args.episodes * ep_len
 

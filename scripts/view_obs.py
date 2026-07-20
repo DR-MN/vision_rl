@@ -29,6 +29,7 @@ import jax
 import jax.numpy as jnp
 from PIL import Image
 
+from vision_rl import checkpoint as ckpt_io
 from vision_rl.config import Config, so101_config
 from vision_rl.envs import VisionVecEnv
 
@@ -69,32 +70,27 @@ def main():
     ap.add_argument("--out", type=str, default="obs")
     args = ap.parse_args()
 
-    cfg = so101_config() if args.task == "so101_pick_place" else Config()
+    # With --policy the checkpoint defines the config; without it, --task picks a
+    # default one (this script also runs standalone to preview random rollouts).
+    ck = ckpt_io.load(args.policy) if args.policy else None
+    cfg = ck.config if ck else (
+        so101_config() if args.task == "so101_pick_place" else Config())
     cfg.render.backend = args.backend
     cfg.ppo.num_envs = max(args.envs, 1)
     if args.res:
         if args.policy:
-            print("WARNING: --policy expects the resolution it was trained at; a "
-                  "different --res will fail to load the checkpoint.")
+            print("WARNING: --policy expects the resolution it was trained at "
+                  f"({cfg.render.width}); --res {args.res} will fail to load.")
         cfg.render.width = cfg.render.height = args.res
-    elif args.policy:
-        from vision_rl.train import ckpt_render_res
-        res = ckpt_render_res(args.policy, cfg)
-        if res and res != cfg.render.width:
-            print(f"[ckpt] trained at {res}x{res} -> rendering at {res}")
-            cfg.render.width = cfg.render.height = res
     # sensible default upscale: big for tiny frames, none for high-res
     args.scale = args.scale or (1 if cfg.render.width >= 160 else 4)
 
     env = VisionVecEnv(cfg)
     act = None
-    if args.policy:
-        from flax import serialization
+    if ck:
         from vision_rl.train import _build_network
         net = _build_network(cfg, env.action_size)
-        params = net.init(jax.random.PRNGKey(0), env.sample_obs())
-        with open(args.policy, "rb") as fh:
-            params = serialization.from_bytes(params, fh.read())
+        params = ck.restore_params(net.init(jax.random.PRNGKey(0), env.sample_obs()))
         act = jax.jit(lambda o: net.apply(params, o)[0].mode())
 
     rng = jax.random.PRNGKey(0)
