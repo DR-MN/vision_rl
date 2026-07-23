@@ -41,12 +41,17 @@ class SO101Config:
     action_scale: float = 0.9           # residual joint-target range (rad) around
                                         # home; covers the spawn region + descent
                                         # (near corners need ~0.84 rad base yaw)
+    # Per-control-step slew limit on arm joint targets (rad); caps commanded
+    # angular velocity so the arm doesn't snap to a new target in one 20ms
+    # step. Mirrors the real-deploy slew limit (scripts/run_real.py --max-step-rad).
+    max_joint_delta: float = 0.08
 
-    # Cube spawn region (metres) — reduced to the SOLID top-down-graspable zone
-    # confirmed by point-down IK reachability (menagerie SO-101).
+    # Cube spawn region (metres) — the SOLID top-down-graspable zone confirmed
+    # by point-down IK reachability (menagerie SO-101), pushed out in x a bit
+    # so the arm has to extend rather than staying folded near the base.
     cube_low: Tuple[float, float] = (0.14, -0.11)
-    cube_high: Tuple[float, float] = (0.22, 0.11)
-    cube_z: float = 0.015              # cube half-size = resting height (3 cm cube)
+    cube_high: Tuple[float, float] = (0.25, 0.11)
+    cube_z: float = 0.0175              # cube half-height = resting height (3.5 cm cube)
     # Place-target region (sampled independently -> varied carry distances).
     target_low: Tuple[float, float] = (0.14, -0.11)
     target_high: Tuple[float, float] = (0.22, 0.11)
@@ -60,7 +65,7 @@ class SO101Config:
     reach_scale: float = 1.0
     grasp_bonus_scale: float = 0.5     # reward closing the jaw when at the cube
     lift_scale: float = 4.0            # the real grasp signal (cube only rises if gripped)
-    lift_thresh: float = 0.05          # cube_z above which it counts as lifted (3.5cm off table)
+    lift_thresh: float = 0.0525        # cube_z above which it counts as lifted (3.5cm off table)
     max_lift: float = 0.10
     place_scale: float = 2.0
     place_radius: float = 0.15         # normalization radius for place reward
@@ -69,10 +74,45 @@ class SO101Config:
     ctrl_cost_scale: float = 0.01
     # Penalty per step while the gripper dives into the table away from the cube.
     table_penalty_scale: float = 0.5
+    # Virtual clearance plane above the table top (z=0): the gripper dipping
+    # below this height while away from the cube counts as a table hit.
+    table_clear: float = 0.02
 
     # Dense progress shaping: reward per-step *improvement* toward the goal.
     reach_progress_scale: float = 3.0    # gripper approaching the cube
     place_progress_scale: float = 3.0    # lifted cube approaching the pad
+
+
+@dataclass
+class SO101PickConfig:
+    """SO-101 pick-only environment settings (grasp + lift, no place)."""
+
+    episode_length: int = 250
+    ctrl_dt: float = 0.02
+    action_scale: float = 0.9
+    # Per-control-step slew limit on arm joint targets (rad); see SO101Config.
+    max_joint_delta: float = 0.08
+
+    # Cube spawn region (metres); see SO101Config.cube_low/high.
+    cube_low: Tuple[float, float] = (0.15, -0.13)
+    cube_high: Tuple[float, float] = (0.27, 0.13)
+    cube_z: float = 0.0175              # cube half-height = resting height (3.5 cm cube)
+
+    grasp_dist: float = 0.045
+
+    # Reward shaping (staged: reach -> grasp -> lift).
+    reach_scale: float = 1.0
+    grasp_bonus_scale: float = 0.5
+    lift_scale: float = 4.0
+    lift_thresh: float = 0.0525        # cube_z above which it counts as lifted (3.5cm off table)
+    pick_height: float = 0.10          # cube must rise this high above the table for a successful pick
+    success_bonus: float = 5.0
+    ctrl_cost_scale: float = 0.01
+    table_penalty_scale: float = 0.5
+    # Virtual clearance plane above the table top (z=0); see SO101Config.table_clear.
+    table_clear: float = 0.02
+
+    reach_progress_scale: float = 3.0
 
 
 @dataclass
@@ -155,10 +195,11 @@ class PPOConfig:
 
 @dataclass
 class Config:
-    # Which task to build: "franka_reach" | "so101_pick_place".
+    # Which task to build: "franka_reach" | "so101_pick_place" | "so101_pick".
     task: str = "franka_reach"
     env: EnvConfig = field(default_factory=EnvConfig)
     so101: SO101Config = field(default_factory=SO101Config)
+    pick: SO101PickConfig = field(default_factory=SO101PickConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
     ppo: PPOConfig = field(default_factory=PPOConfig)
@@ -213,5 +254,18 @@ def so101_config() -> Config:
     cfg.ppo.entropy_coef = 0.005
     # 84x84 -> 7x7x64 flatten, the shape the (8,4,3)/(4,2,1) stack was designed
     # for. Resolves the 2 cm cube in ~6 px; 224 only inflates the encoder Dense.
+    cfg.render.width = cfg.render.height = 84
+    return cfg
+
+
+def so101_pick_config() -> Config:
+    """Default config for the SO-101 pick-only task (grasp + lift, no place)."""
+    cfg = Config()
+    cfg.task = "so101_pick"
+    cfg.exp_name = "so101_pick_vision_ppo"
+    cfg.ppo.num_envs = 256
+    cfg.ppo.rollout_length = 32
+    cfg.ppo.num_minibatches = 8
+    cfg.ppo.entropy_coef = 0.005
     cfg.render.width = cfg.render.height = 84
     return cfg

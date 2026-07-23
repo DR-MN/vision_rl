@@ -1,6 +1,7 @@
 from vision_rl.envs.buffers import probe_peaks, size_buffers
 from vision_rl.envs.franka_reach import FrankaReachEnv, EnvState
 from vision_rl.envs.so101_pick_place import SO101PickPlaceEnv
+from vision_rl.envs.so101_pick import SO101PickEnv
 from vision_rl.envs.vision_wrapper import VisionVecEnv
 
 
@@ -21,10 +22,12 @@ def make_env(cfg):
         return FrankaReachEnv(cfg.env, **kwargs)
     if task == "so101_pick_place":
         return SO101PickPlaceEnv(cfg.so101, **kwargs)
+    if task == "so101_pick":
+        return SO101PickEnv(cfg.pick, **kwargs)
     raise ValueError(f"unknown task: {task}")
 
 
 __all__ = [
-    "FrankaReachEnv", "SO101PickPlaceEnv", "EnvState", "VisionVecEnv", "make_env",
-    "probe_peaks", "size_buffers",
+    "FrankaReachEnv", "SO101PickPlaceEnv", "SO101PickEnv", "EnvState",
+    "VisionVecEnv", "make_env", "probe_peaks", "size_buffers",
 ]

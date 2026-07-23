@@ -1,17 +1,19 @@
-"""Single-robot SO-101 pick-and-place environment on MuJoCo-JAX (MJX).
+"""Single-robot SO-101 pick-only environment on MuJoCo-JAX (MJX).
 
-The SO-101 (5-DoF arm + 1-DoF parallel-ish jaw gripper) must pick a cube and
-deliver it to a target pad. As with the Franka reach task, the cube and target
-positions are *not* in the proprioceptive observation -- the agent must locate
-them from the camera image (added by the vision wrapper).
+Same robot/scene as the pick-and-place task (envs/so101_pick_place.py), but
+the goal is just to pick the cube up and hold it above `cfg.pick_height`
+(10 cm above the table by default) -- no carry-to-target/place stage. As with
+the pick-and-place task, the cube position is *not* in the proprioceptive
+observation -- the agent must locate it from the camera image (added by the
+vision wrapper).
 
 Action (6-d, all in [-1, 1]):
     [0:5] residual position targets for the 5 arm joints
     [5]   gripper command (mapped to the jaw's ctrl range: -1=closed, +1=open)
 
-Reward is staged and dense: reach the cube -> lift it -> carry it over the
-target -> bonus for a successful placement. Written for a single world; the
-vision wrapper adds vmap + rendering + frame-stacking + auto-reset.
+Reward is staged and dense: reach the cube -> grasp it -> lift it above
+pick_height. Written for a single world; the vision wrapper adds vmap +
+rendering + frame-stacking + auto-reset.
 """
 
 from __future__ import annotations
@@ -25,38 +27,34 @@ import mujoco
 from flax import struct
 from mujoco import mjx
 
-from vision_rl.config import SO101Config
+from vision_rl.config import SO101PickConfig
 from vision_rl.envs.buffers import size_buffers
+from vision_rl.envs.so101_pick_place import _N_ARM, _N_ROBOT
 
 _ASSET_DIR = os.path.join(os.path.dirname(__file__), "assets", "so101_menagerie")
-_SCENE_XML = os.path.join(_ASSET_DIR, "so101_pick_place.xml")
-
-_N_ARM = 5           # controlled arm joints
-_N_ROBOT = 6         # arm + gripper joints (qpos 0..5); cube addr found dynamically
+_SCENE_XML = os.path.join(_ASSET_DIR, "so101_pick.xml")
 
 
 @struct.dataclass
-class SO101State:
+class SO101PickState:
     data: mjx.Data
     obs: jax.Array
     reward: jax.Array
     done: jax.Array
-    target_pos: jax.Array    # [3] place-target world position
     cube_init_z: jax.Array   # scalar resting height (for lift measurement)
-    was_lifted: jax.Array    # scalar 0/1, latched once cube is lifted
-    grasped: jax.Array       # scalar 0/1, cube currently attached to gripper
+    was_picked: jax.Array    # scalar 0/1, latched once a successful pick happens
+    grasped: jax.Array       # scalar 0/1, cube currently off the table
     prev_reach: jax.Array    # last-step gripper->cube distance (progress shaping)
-    prev_place: jax.Array    # last-step cube->pad distance (progress shaping)
     step_count: jax.Array
     rng: jax.Array
     metrics: dict[str, Any]
 
 
-class SO101PickPlaceEnv:
-    def __init__(self, cfg: SO101Config | None = None, impl: str = "jax",
+class SO101PickEnv:
+    def __init__(self, cfg: SO101PickConfig | None = None, impl: str = "jax",
                  num_envs: int = 1, naconmax: int | None = None,
                  njmax: int | None = None):
-        self.cfg = cfg or SO101Config()
+        self.cfg = cfg or SO101PickConfig()
         self.impl = impl                              # "jax" (default) or "warp"
 
         self.mj_model = mujoco.MjModel.from_xml_path(_SCENE_XML)
@@ -76,8 +74,6 @@ class SO101PickPlaceEnv:
         m = self.mj_model
         self._grasp_site = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "gripperframe")
         cube_body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "cube")
-        target_body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "place_target")
-        self._target_mocap = int(m.body_mocapid[target_body])
 
         # Cube free-joint qpos/qvel addresses (robust to body ordering).
         cube_jnt = m.body_jntadr[cube_body]
@@ -96,14 +92,10 @@ class SO101PickPlaceEnv:
 
         self._cube_low = jnp.asarray(self.cfg.cube_low)
         self._cube_high = jnp.asarray(self.cfg.cube_high)
-        self._tgt_low = jnp.asarray(self.cfg.target_low)
-        self._tgt_high = jnp.asarray(self.cfg.target_high)
 
-        # Table-contact penalty: the MJCF now has collision geoms on the arm, so
-        # the solver physically stops it at the table on BOTH backends. The warp
-        # backend does not expose data.contact to Python, so the *reward* signal
-        # uses the grasp-site height instead (see _table_dive). Clearance is
-        # measured above the table top at z=0.
+        # Table-contact penalty: see so101_pick_place.SO101PickPlaceEnv for the
+        # backend-agnostic rationale (warp doesn't expose data.contact).
+        # Clearance is measured above the table top at z=0.
         self._table_clear = self.cfg.table_clear
 
     # ------------------------------------------------------------------ #
@@ -142,13 +134,9 @@ class SO101PickPlaceEnv:
     def _table_dive(self, data, d_reach):
         """Backend-agnostic proxy for the gripper touching/diving into the table.
 
-        The warp Data does not expose `data.contact`, so instead of reading the
-        contact buffer we use the grasp-site height: the gripper entering the
-        clearance zone (table_clear above the table top, z=0) while NOT near the
-        cube (i.e. pressing toward the table somewhere other than the object it
-        is meant to pick) counts as a hit -- even a light touch, not just a deep
-        dive. Uses only the grasp-site position and reach distance, both
-        available on jax + warp.
+        See so101_pick_place.SO101PickPlaceEnv._table_dive for the full
+        rationale; entering the clearance zone above the table top while away
+        from the cube counts as a hit.
         """
         grasp_z = self._grasp_pos(data)[2]
         below = jnp.clip(self._table_clear - grasp_z, 0.0, None)
@@ -156,8 +144,8 @@ class SO101PickPlaceEnv:
         return ((below > 0.0) & (away > 0.5)).astype(jnp.float32)
 
     # ------------------------------------------------------------------ #
-    def reset(self, rng: jax.Array) -> SO101State:
-        rng, q_rng, c_rng, t_rng = jax.random.split(rng, 4)
+    def reset(self, rng: jax.Array) -> SO101PickState:
+        rng, q_rng, c_rng = jax.random.split(rng, 3)
 
         qpos = self._home_qpos.at[:_N_ARM].add(
             0.05 * jax.random.normal(q_rng, (_N_ARM,))
@@ -171,35 +159,25 @@ class SO101PickPlaceEnv:
 
         data = self._make_data()
         data = data.replace(qpos=qpos, ctrl=self._home_ctrl)
-
-        # Randomize the place target.
-        target_xy = jax.random.uniform(
-            t_rng, (2,), minval=self._tgt_low, maxval=self._tgt_high
-        )
-        target_pos = jnp.array([target_xy[0], target_xy[1], 0.001])
-        mocap_pos = data.mocap_pos.at[self._target_mocap].set(target_pos)
-        data = data.replace(mocap_pos=mocap_pos)
-
         data = mjx.forward(self.mjx_model, data)
 
         obs = self._proprio(data)
         cube0 = self._cube_pos(data)
         d_reach = jnp.linalg.norm(self._grasp_pos(data) - cube0)
-        d_place = jnp.linalg.norm(cube0[:2] - target_pos[:2])
         metrics = {"dist": d_reach, "success": jnp.float32(0.0),
                    "cube_z": cube0[2], "lifted": jnp.float32(0.0),
                    "table_hit": jnp.float32(0.0)}
-        return SO101State(
+        return SO101PickState(
             data=data, obs=obs,
             reward=jnp.float32(0.0), done=jnp.float32(0.0),
-            target_pos=target_pos, cube_init_z=jnp.float32(self.cfg.cube_z),
-            was_lifted=jnp.float32(0.0), grasped=jnp.float32(0.0),
-            prev_reach=d_reach, prev_place=d_place,
+            cube_init_z=jnp.float32(self.cfg.cube_z),
+            was_picked=jnp.float32(0.0), grasped=jnp.float32(0.0),
+            prev_reach=d_reach,
             step_count=jnp.int32(0),
             rng=rng, metrics=metrics,
         )
 
-    def step(self, state: SO101State, action: jax.Array) -> SO101State:
+    def step(self, state: SO101PickState, action: jax.Array) -> SO101PickState:
         action = jnp.clip(action, -1.0, 1.0)
 
         # Arm: residual position control around home.
@@ -230,52 +208,42 @@ class SO101PickPlaceEnv:
         cube_lift = cube[2] - state.cube_init_z
         # Whether the cube is CURRENTLY off the table (physically held/lifted).
         lifted_now = (cube[2] > self.cfg.lift_thresh).astype(jnp.float32)
-        # Latch: a real pick happened at some point this episode (success needs it).
-        ever_lifted = jnp.maximum(state.was_lifted, lifted_now)
-        d_place = jnp.linalg.norm(cube[:2] - state.target_pos[:2])
-
-        placed = (ever_lifted > 0) & (d_place < self.cfg.success_thresh) & \
-                 (cube[2] < state.cube_init_z + 0.02)
-        success = placed.astype(jnp.float32)
-
-        # --- Re-grasp on slip ---
-        # Reach is active whenever the cube is neither currently held nor already
-        # placed, so a dropped/slipped cube pulls the arm back to pick it up
-        # again. Place shaping is active only while the cube is truly lifted.
-        reach_gate = 1.0 - jnp.maximum(lifted_now, success)
-        place_gate = lifted_now
 
         # Gripper-closing command (action[5] < 0 -> closing); shaping so the jaw
         # tends to close when the fingers are actually at the cube.
         grip_closing = (0.5 * (action[_N_ARM] + 1.0) < 0.5).astype(jnp.float32)
         near_cube = (d_reach < self.cfg.grasp_dist).astype(jnp.float32)
         # "Held" proxy: fingers at the cube AND jaw commanded closed. Keeps the
-        # grasp bonus alive through the lift and opens carry shaping as soon as
-        # the cube is grasped, so reach->grasp->lift->carry has no reward cliff.
+        # grasp bonus alive through the lift so reach->grasp->lift has no
+        # reward cliff.
         held = near_cube * grip_closing
 
+        # Pick succeeds once the cube is genuinely held AND raised above
+        # pick_height (10cm above the table by default).
+        picked = held * (cube[2] > self.cfg.pick_height).astype(jnp.float32)
+        success = picked
+        ever_picked = jnp.maximum(state.was_picked, success)
+
+        # Reach shaping is active whenever the cube is neither currently held
+        # nor already successfully picked, so a dropped/slipped cube pulls the
+        # arm back to pick it up again.
+        reach_gate = 1.0 - jnp.maximum(lifted_now, success)
+
         reach_progress = state.prev_reach - d_reach
-        # Carry progress pays whenever the cube is HELD (was: only above the 5 cm
-        # lift line), so moving a grasped cube toward the pad always gives signal.
-        place_progress = held * (state.prev_place - d_place)
 
         reach_r = -self.cfg.reach_scale * d_reach * reach_gate
         reach_pr = self.cfg.reach_progress_scale * reach_progress * reach_gate
-        # Grasp bonus stays on while the cube is held, even above the 5 cm lift
-        # line (was gated by reach_gate -> a -0.5 cliff that discouraged lifting).
+        # Grasp bonus stays on while the cube is held, even above the lift line.
         grasp_r = self.cfg.grasp_bonus_scale * held
         # The physical lift signal: the cube only rises if it is really gripped.
-        lift_r = self.cfg.lift_scale * jnp.clip(cube_lift, 0.0, self.cfg.max_lift)
-        place_r = place_gate * self.cfg.place_scale * (
-            1.0 - jnp.clip(d_place, 0.0, self.cfg.place_radius) / self.cfg.place_radius
-        )
-        place_pr = self.cfg.place_progress_scale * place_progress
+        # Caps at pick_height -- the reward saturates once the goal height is hit.
+        lift_r = self.cfg.lift_scale * jnp.clip(cube_lift, 0.0, self.cfg.pick_height)
         succ_r = self.cfg.success_bonus * success
         ctrl_cost = self.cfg.ctrl_cost_scale * jnp.sum(jnp.square(action))
-        # Penalize the gripper diving into the table away from the cube.
+        # Penalize the gripper touching/diving into the table away from the cube.
         table_hit = self._table_dive(data, d_reach)
         table_pen = self.cfg.table_penalty_scale * table_hit
-        reward = (reach_r + reach_pr + grasp_r + lift_r + place_r + place_pr
+        reward = (reach_r + reach_pr + grasp_r + lift_r
                   + succ_r - ctrl_cost - table_pen)
 
         step_count = state.step_count + 1
@@ -286,7 +254,7 @@ class SO101PickPlaceEnv:
                    "lifted": lifted_now, "table_hit": table_hit}
         return state.replace(
             data=data, obs=obs, reward=reward, done=done,
-            was_lifted=ever_lifted, grasped=lifted_now,
-            prev_reach=d_reach, prev_place=d_place,
+            was_picked=ever_picked, grasped=lifted_now,
+            prev_reach=d_reach,
             step_count=step_count, metrics=metrics,
         )

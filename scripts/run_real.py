@@ -18,9 +18,10 @@ task, THEN move to hardware:
         --ckpt checkpoints/so101_pick_place_vision_ppo_step2112.msgpack \
         --episodes 3 --save-video /tmp/loopback.mp4
 
-    # physical SO-101 (slew-rate limited; keep a hand on the e-stop)
+    # physical SO-101: joints via LeRobot (--port), frames via USB cam (--camera)
+    # slew-rate limited; keep a hand on the e-stop
     python scripts/run_real.py --robot real --port /dev/ttyACM0 \
-        --ckpt <ckpt> --camera-key overhead --unit deg --max-step-rad 0.15
+        --ckpt <ckpt> --camera /dev/video2 --max-step-rad 0.15
 """
 
 from __future__ import annotations
@@ -35,7 +36,8 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vision_rl import checkpoint as ckpt_io
-from vision_rl.deploy import SO101Bridge, RealPolicy, SimRobot, LeRobotSO101
+from vision_rl.deploy import (
+    SO101Bridge, RealPolicy, SimRobot, LeRobotSO101, OpenCVCamera)
 
 
 def _slew(target, prev, max_step):
@@ -43,6 +45,21 @@ def _slew(target, prev, max_step):
     if not max_step or max_step <= 0:
         return np.asarray(target, dtype=np.float64)
     return np.clip(target, prev - max_step, prev + max_step)
+
+
+def _show_frame(rgb, win="model input (RGB, as seen by policy)"):
+    """cv2.imshow the exact uint8 frame passed to bridge.reset/observe.
+
+    Upscaled with INTER_NEAREST (same as scripts/camera_84x84.py) so the tiny
+    training-res frame is actually visible. Returns True if 'q' was pressed.
+    """
+    import cv2
+    bgr = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR)
+    scale = max(1, 480 // bgr.shape[0])
+    preview = cv2.resize(bgr, (bgr.shape[1] * scale, bgr.shape[0] * scale),
+                          interpolation=cv2.INTER_NEAREST)
+    cv2.imshow(win, preview)
+    return cv2.waitKey(1) & 0xFF == ord("q")
 
 
 def _move_to(robot, bridge, goal, n=40, dt=0.02, max_step=0.05):
@@ -71,12 +88,15 @@ def main():
     ap.add_argument("--save-video", type=str, default=None,
                     help="write the camera stream to this mp4/gif (needs imageio)")
     # real-hardware options
-    ap.add_argument("--port", type=str, default=None, help="serial port (real)")
+    ap.add_argument("--port", type=str, default=None, help="servo serial port (real)")
     ap.add_argument("--robot-id", type=str, default="so101")
-    ap.add_argument("--camera-key", type=str, default="overhead")
-    ap.add_argument("--camera-index", type=int, default=0)
-    ap.add_argument("--unit", choices=["deg", "rad"], default="deg")
-    ap.add_argument("--bgr", action="store_true", help="camera returns BGR")
+    ap.add_argument("--camera", type=str, default="0",
+                    help="USB camera index or /dev/videoN (real); frames -> 84x84 RGB")
+    ap.add_argument("--grip-flip", action="store_true",
+                    help="flip gripper direction if your calibration has 0=open")
+    ap.add_argument("--show-camera", action="store_true",
+                    help="cv2.imshow the exact frame fed to the model each step "
+                         "(press 'q' in the window to stop)")
     args = ap.parse_args()
 
     # Config drives shapes/units; it travels inside the checkpoint.
@@ -98,9 +118,10 @@ def main():
     else:
         if not args.port:
             ap.error("--robot real requires --port")
+        camera = OpenCVCamera(args.camera, size=cfg.render.width)
         robot = LeRobotSO101.connect(
-            port=args.port, robot_id=args.robot_id, camera_key=args.camera_key,
-            camera_index=args.camera_index, unit=args.unit, bgr=args.bgr)
+            port=args.port, camera=camera, grip_range=bridge.gripper_ctrl_range,
+            robot_id=args.robot_id, grip_flip=args.grip_flip)
         print("[run] slewing to home before start ...")
         _move_to(robot, bridge, bridge.home_targets())
 
@@ -110,6 +131,8 @@ def main():
         for ep in range(args.episodes):
             qpos = robot.reset()
             rgb = robot.read_camera()
+            if args.show_camera and _show_frame(rgb):
+                raise KeyboardInterrupt
             obs = bridge.reset(qpos, rgb)
             commanded = bridge.home_targets()
 
@@ -126,6 +149,8 @@ def main():
                 rgb = robot.read_camera()
                 if args.save_video:
                     frames.append(np.asarray(rgb))
+                if args.show_camera and _show_frame(rgb):
+                    raise KeyboardInterrupt
                 obs = bridge.observe(qpos, rgb)
 
                 if realtime:
@@ -150,6 +175,9 @@ def main():
             except Exception:
                 pass
         robot.close()
+        if args.show_camera:
+            import cv2
+            cv2.destroyAllWindows()
 
     if args.save_video and frames:
         _write_video(args.save_video, frames)

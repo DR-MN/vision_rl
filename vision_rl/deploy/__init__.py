@@ -9,10 +9,11 @@ Run it with scripts/run_real.py (defaults to the hardware-free sim loopback).
 """
 
 from vision_rl.deploy.bridge import SO101Bridge, JOINT_NAMES
+from vision_rl.deploy.camera import OpenCVCamera
 from vision_rl.deploy.policy import RealPolicy
 from vision_rl.deploy.robots import RobotBackend, SimRobot, LeRobotSO101
 
 __all__ = [
-    "SO101Bridge", "JOINT_NAMES", "RealPolicy",
+    "SO101Bridge", "JOINT_NAMES", "RealPolicy", "OpenCVCamera",
     "RobotBackend", "SimRobot", "LeRobotSO101",
 ]

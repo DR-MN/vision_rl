@@ -129,87 +129,104 @@ class SimRobot(RobotBackend):
 # Real hardware via LeRobot's SO101Follower.
 # --------------------------------------------------------------------------- #
 class LeRobotSO101(RobotBackend):
-    """Drive a physical SO-101 through a `lerobot` follower object.
+    """Drive a physical SO-101: joints via a `lerobot` follower, frames via an
+    external `camera` object (e.g. deploy.camera.OpenCVCamera).
 
-    lerobot's module paths and value units shift between releases, so rather than
-    hard-wire a version this backend wraps a follower you construct and connect
-    yourself (or use `LeRobotSO101.connect(...)` best-effort). We only translate:
+    The camera is decoupled from LeRobot on purpose: the policy needs 84x84 RGB
+    from a fixed external viewpoint, which the OpenCV camera produces directly
+    (same as scripts/camera_84x84.py). LeRobot is used only for the servos.
 
-        obs["{joint}.pos"] (native units)  <-- joint angles -->  action dict
-        obs[camera_key]                    <-- RGB frame
+    Units (verified against lerobot SO101Follower):
+      * With `use_degrees=True` (set by `connect`), the 5 ARM joints read/accept
+        **degrees** -> converted to/from radians here.
+      * The GRIPPER is always `RANGE_0_100` (0=closed .. 100=open in the servo's
+        calibrated range), NOT degrees. Mapped to/from the sim gripper joint range
+        (`grip_range`, in rad) linearly. Use `grip_flip=True` if your calibration
+        has 0=open.
 
     CALIBRATION (must verify before trusting the arm):
-      * `unit`: lerobot commonly reports degrees after calibration; set "rad" if
-        yours already returns radians. If it returns NORMALIZED values (-100..100),
-        convert those to radians before passing in, or extend this class.
+      * Run LeRobot's servo calibration first, or read_joints() is meaningless.
       * The sim's joint zeros/signs must line up with the servo calibration. Move
-        each joint to a known angle and confirm read_joints() matches the sim.
-        A wrong sign or offset here will drive the arm the wrong way -- start with
-        a slew-rate limit and be ready on the e-stop (see scripts/run_real.py).
+        each joint to a known angle and confirm read_joints() (rad) matches the
+        sim pose. A wrong sign/offset drives the arm the wrong way -- `offset_rad`
+        lets you correct per-joint zero offsets without editing code. Start with a
+        slew-rate limit and be ready on the e-stop (see scripts/run_real.py).
     """
 
-    def __init__(self, robot, joint_names, camera_key: str,
-                 unit: str = "deg", bgr: bool = False):
+    def __init__(self, robot, joint_names, camera, grip_range,
+                 arm_unit: str = "deg", offset_rad=None, grip_flip: bool = False):
         self.robot = robot
-        self.joint_names = tuple(joint_names)
-        self.camera_key = camera_key
-        self.bgr = bgr
-        if unit not in ("deg", "rad"):
-            raise ValueError("unit must be 'deg' or 'rad'")
-        self._to_rad = (np.pi / 180.0) if unit == "deg" else 1.0
-        self._from_rad = (180.0 / np.pi) if unit == "deg" else 1.0
+        self.joint_names = tuple(joint_names)           # 6 names, gripper last
+        self.camera = camera                            # object with .read()/.close()
+        self._grip_low, self._grip_high = float(grip_range[0]), float(grip_range[1])
+        self._grip_flip = grip_flip
+        if arm_unit not in ("deg", "rad"):
+            raise ValueError("arm_unit must be 'deg' or 'rad'")
+        self._arm_to_rad = (np.pi / 180.0) if arm_unit == "deg" else 1.0
+        self._arm_from_rad = (180.0 / np.pi) if arm_unit == "deg" else 1.0
+        self._offset = (np.zeros(len(self.joint_names)) if offset_rad is None
+                        else np.asarray(offset_rad, dtype=np.float64))
         if not getattr(robot, "is_connected", False):
             robot.connect()
 
+    @property
+    def _arm_names(self):
+        return self.joint_names[:-1]
+
+    @property
+    def _grip_name(self):
+        return self.joint_names[-1]
+
+    def _grip_norm_to_rad(self, norm: float) -> float:
+        f = (100.0 - norm) if self._grip_flip else norm
+        return self._grip_low + (f / 100.0) * (self._grip_high - self._grip_low)
+
+    def _grip_rad_to_norm(self, rad: float) -> float:
+        frac = (rad - self._grip_low) / (self._grip_high - self._grip_low)
+        norm = float(np.clip(frac * 100.0, 0.0, 100.0))
+        return (100.0 - norm) if self._grip_flip else norm
+
     @classmethod
-    def connect(cls, port: str, robot_id: str = "so101", camera_key: str = "overhead",
-                camera_index: int = 0, fps: int = 30, width: int = 640, height: int = 480,
-                unit: str = "deg", bgr: bool = False):
-        """Best-effort construction of an SO101Follower. Adapt imports to your
-        installed lerobot version if these paths differ."""
-        try:                                            # newer layout
+    def connect(cls, port: str, camera, grip_range, robot_id: str = "so101",
+                offset_rad=None, grip_flip: bool = False):
+        """Construct an SO101Follower (servos only; frames come from `camera`).
+        Forces `use_degrees=True` so the arm reports degrees."""
+        try:                                            # current layout (src/lerobot)
             from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
-            from lerobot.cameras.opencv import OpenCVCameraConfig
         except Exception:                               # older layout
             from lerobot.common.robots.so101_follower import (  # type: ignore
                 SO101Follower, SO101FollowerConfig)
-            from lerobot.common.cameras.opencv import OpenCVCameraConfig  # type: ignore
 
-        cam_cfg = {camera_key: OpenCVCameraConfig(
-            index_or_path=camera_index, fps=fps, width=width, height=height)}
-        robot = SO101Follower(SO101FollowerConfig(port=port, id=robot_id, cameras=cam_cfg))
+        robot = SO101Follower(SO101FollowerConfig(
+            port=port, id=robot_id, cameras={}, use_degrees=True))
         from vision_rl.deploy.bridge import JOINT_NAMES
-        return cls(robot, JOINT_NAMES, camera_key, unit=unit, bgr=bgr)
-
-    def _read_obs(self) -> dict:
-        return self.robot.get_observation()
+        return cls(robot, JOINT_NAMES, camera, grip_range,
+                   arm_unit="deg", offset_rad=offset_rad, grip_flip=grip_flip)
 
     def reset(self) -> np.ndarray:
         return self.read_joints()
 
     def read_joints(self) -> np.ndarray:
-        obs = self._read_obs()
-        vals = [float(obs[f"{name}.pos"]) for name in self.joint_names]
-        return np.asarray(vals, dtype=np.float64) * self._to_rad
+        obs = self.robot.get_observation()
+        arm = np.asarray([float(obs[f"{n}.pos"]) for n in self._arm_names],
+                         dtype=np.float64) * self._arm_to_rad
+        grip = self._grip_norm_to_rad(float(obs[f"{self._grip_name}.pos"]))
+        return np.concatenate([arm, [grip]]) + self._offset
 
     def read_camera(self) -> np.ndarray:
-        obs = self._read_obs()
-        frame = np.asarray(obs[self.camera_key])
-        if self.bgr:
-            frame = frame[..., ::-1]                    # BGR -> RGB
-        return frame
+        return self.camera.read()                       # uint8 RGB [H, W, 3]
 
     def send_targets(self, targets_rad: np.ndarray) -> None:
-        targets = np.asarray(targets_rad, dtype=np.float64) * self._from_rad
-        action = {f"{name}.pos": float(v)
-                  for name, v in zip(self.joint_names, targets)}
+        t = np.asarray(targets_rad, dtype=np.float64) - self._offset
+        arm_deg = t[:len(self._arm_names)] * self._arm_from_rad
+        action = {f"{n}.pos": float(v) for n, v in zip(self._arm_names, arm_deg)}
+        action[f"{self._grip_name}.pos"] = self._grip_rad_to_norm(float(t[-1]))
         self.robot.send_action(action)
-
-    def home(self) -> None:
-        pass  # the runner slews to home_targets() before disconnecting
 
     def close(self) -> None:
         try:
             self.robot.disconnect()
         except Exception:
             pass
+        if self.camera is not None:
+            self.camera.close()

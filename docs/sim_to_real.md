@@ -30,9 +30,12 @@ the action decode maps 1:1 onto real position commands.
    **MuJoCo forward kinematics on the same model/site the env used** (`grasp_xyz`),
    guaranteeing the proprio vector matches training.
 
-3. **real camera → pixels** — `SO101Bridge` keeps a rolling 3-frame stack
-   (`reset`/`observe`), resizing each frame to 84×84 RGB uint8 — mirroring
-   [vision_wrapper.py](../vision_rl/envs/vision_wrapper.py).
+3. **real camera → pixels** — [camera.py](../vision_rl/deploy/camera.py)
+   `OpenCVCamera` grabs USB-camera frames and returns 84×84 RGB uint8 (same as
+   [scripts/camera_84x84.py](../scripts/camera_84x84.py)); `SO101Bridge` keeps a
+   rolling 3-frame stack (`reset`/`observe`) — mirroring
+   [vision_wrapper.py](../vision_rl/envs/vision_wrapper.py). Camera is decoupled
+   from LeRobot: **joints via LeRobot, frames via OpenCV.**
 
 Inference is [policy.py](../vision_rl/deploy/policy.py) `RealPolicy` (batch-1,
 jitted, deterministic `pi.mode()`), reusing the training network builder and
@@ -75,10 +78,16 @@ The SO-101 is a first-class LeRobot robot. `LeRobotSO101` wraps a
 lerobot version, or pass a follower you already use.
 
 ```bash
-python scripts/run_real.py --robot real --port /dev/ttyACM0 \
-    --ckpt <ckpt.msgpack> --camera-key overhead --unit deg \
-    --max-step-rad 0.15         # per-step slew limit — keep low on first runs
+python scripts/run_real.py --robot real \
+    --port /dev/ttyACM0 \        # servos, via LeRobot
+    --camera /dev/video0 \       # frames, via OpenCV (-> 84x84 RGB)
+    --ckpt <ckpt.msgpack> --unit deg \
+    --max-step-rad 0.15          # per-step slew limit — keep low on first runs
 ```
+
+Joints come from LeRobot (`--port`); camera frames come from the OpenCV
+`--camera` device (index `0` or a `/dev/videoN` path), resized to the trained
+84×84 exactly like `scripts/camera_84x84.py`.
 
 **Calibration is the make-or-break step** (do this before trusting any motion):
 

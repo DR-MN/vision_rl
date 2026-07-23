@@ -1,4 +1,4 @@
-<mujoco model="so101 pick place (menagerie)">
+<mujoco model="so101 pick (menagerie)">
   <!-- Menagerie SO-101 robot (proper collision fingers). meshdir=assets is set
        inside so101.xml; option/defaults/actuators come from it too. -->
   <include file="so101.xml"/>
@@ -22,7 +22,6 @@
              width="300" height="300"/>
     <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="4 4" reflectance="0.1"/>
     <material name="cube_mat" rgba="1 0.85 0.05 1"/>
-    <material name="pad_mat" rgba="0.90 0.10 0.10 1"/>
     <material name="table_mat" rgba="0.80 0.79 0.75 1"/>
     <material name="leg_mat" rgba="0.30 0.22 0.14 1"/>
   </asset>
@@ -49,14 +48,8 @@
             solref="0.01 1" solimp="0.95 0.99 0.001" mass="0.03"/>
     </body>
 
-    <!-- Place target: flat mocap marker on the table (randomized each episode). -->
-    <body name="place_target" mocap="true" pos="0.18 0.08 0.001">
-      <geom name="place_target" type="cylinder" size="0.025 0.001" material="pad_mat"
-            contype="0" conaffinity="0"/>
-    </body>
-
     <!-- Overhead-ish camera framing the workspace from the -y side, tilted ~6
-         degrees up from the original pitch to match the real camera mount. -->
+         degrees up from the original pick-place pitch to match the real camera mount. -->
     <camera name="overhead_cam" pos="0.16 -0.42 0.34" xyaxes="1 0 0 0 0.537 0.843"/>
   </worldbody>
 

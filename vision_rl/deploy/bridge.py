@@ -99,6 +99,12 @@ class SO101Bridge:
     def joint_names(self):
         return JOINT_NAMES
 
+    @property
+    def gripper_ctrl_range(self) -> tuple[float, float]:
+        """(closed, open) gripper joint limits in rad -- for mapping to LeRobot's
+        normalized 0..100 gripper command."""
+        return (self._grip_low, self._grip_high)
+
     # ------------------------------------------------------------------ #
     # Model action -> real joint targets
     # ------------------------------------------------------------------ #

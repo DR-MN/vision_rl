@@ -261,11 +261,11 @@ def make_train(cfg: Config) -> Callable[[], dict]:
 def main():
     import argparse
 
-    from vision_rl.config import small_config, so101_config
+    from vision_rl.config import small_config, so101_config, so101_pick_config
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", type=str, default="so101_pick_place",
-                        choices=["franka_reach", "so101_pick_place"])
+                        choices=["franka_reach", "so101_pick_place", "so101_pick"])
     parser.add_argument("--small", action="store_true", help="tiny config for tests")
     parser.add_argument("--num-envs", type=int, default=None)
     parser.add_argument("--steps", type=int, default=None)
@@ -300,6 +300,8 @@ def main():
 
     if args.task == "so101_pick_place":
         cfg = so101_config()
+    elif args.task == "so101_pick":
+        cfg = so101_pick_config()
     else:
         cfg = Config()
     if args.small:
