@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 """Print a policy's exploration noise (Gaussian sigma) from a checkpoint.
 
+is my policy still exploring a lot, or has it sharpened up
+sigma < 0.25 = sharp/converged, 0.25–0.5 = normal mid-training, > 0.5 = noise is high enough
+
 The policy is a diagonal Gaussian with a state-independent, learnable `log_std`
 (one value per action dim). Its exploration noise is sigma = exp(log_std), and
 the differential entropy the training log reports is

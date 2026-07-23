@@ -1,4 +1,4 @@
-"""PPO training loop for vision-based Franka reach on MJX.
+"""PPO training loop for vision-based SO-101 manipulation on MJX.
 
 Puts the pieces together:
     VisionVecEnv (MJX physics + batch render + frame stack)
@@ -6,7 +6,7 @@ Puts the pieces together:
         -> rollout collection (jitted lax.scan)
         -> GAE -> PPO minibatch updates.
 
-Run with `python -m vision_rl.train` or via `scripts/train_franka_reach.py`.
+Run with `python -m vision_rl.train`.
 """
 
 from __future__ import annotations
@@ -265,7 +265,7 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", type=str, default="so101_pick_place",
-                        choices=["franka_reach", "so101_pick_place", "so101_pick"])
+                        choices=["so101_pick_place", "so101_pick"])
     parser.add_argument("--small", action="store_true", help="tiny config for tests")
     parser.add_argument("--num-envs", type=int, default=None)
     parser.add_argument("--steps", type=int, default=None)
@@ -298,12 +298,7 @@ def main():
                         help="with --gui, replay as fast as possible (not real-time)")
     args = parser.parse_args()
 
-    if args.task == "so101_pick_place":
-        cfg = so101_config()
-    elif args.task == "so101_pick":
-        cfg = so101_pick_config()
-    else:
-        cfg = Config()
+    cfg = so101_pick_config() if args.task == "so101_pick" else so101_config()
     if args.small:
         cfg.ppo.num_envs = 32
         cfg.ppo.rollout_length = 8

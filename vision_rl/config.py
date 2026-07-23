@@ -11,28 +11,6 @@ from typing import Tuple
 
 
 @dataclass
-class EnvConfig:
-    """Franka reach environment settings."""
-
-    episode_length: int = 200          # env steps per episode before truncation
-    action_repeat: int = 1             # physics steps skipped between policy steps
-    ctrl_dt: float = 0.02              # control timestep (s)
-    sim_dt: float = 0.004              # physics timestep (s); n_substeps = ctrl/sim
-
-    # Target sampling volume (metres, relative to the robot base).
-    target_low: Tuple[float, float, float] = (0.30, -0.25, 0.15)
-    target_high: Tuple[float, float, float] = (0.55, 0.25, 0.45)
-
-    # Reward shaping.
-    reach_reward_scale: float = 1.0    # weight on the -distance dense term
-    success_threshold: float = 0.05    # metres; within this = success bonus
-    success_bonus: float = 2.0
-    ctrl_cost_scale: float = 0.01      # penalty on action magnitude
-
-    action_scale: float = 0.5          # scales normalized [-1,1] action to ctrlrange
-
-
-@dataclass
 class SO101Config:
     """SO-101 pick-and-place environment settings."""
 
@@ -195,15 +173,14 @@ class PPOConfig:
 
 @dataclass
 class Config:
-    # Which task to build: "franka_reach" | "so101_pick_place" | "so101_pick".
-    task: str = "franka_reach"
-    env: EnvConfig = field(default_factory=EnvConfig)
+    # Which task to build: "so101_pick_place" | "so101_pick".
+    task: str = "so101_pick_place"
     so101: SO101Config = field(default_factory=SO101Config)
     pick: SO101PickConfig = field(default_factory=SO101PickConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
     ppo: PPOConfig = field(default_factory=PPOConfig)
-    exp_name: str = "franka_reach_vision_ppo"
+    exp_name: str = "so101_pick_place_vision_ppo"
     ckpt_dir: str = "checkpoints"
     resume_ckpt: str | None = None     # path to a params .msgpack to warm-start from
 

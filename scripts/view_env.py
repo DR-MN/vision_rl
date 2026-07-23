@@ -5,8 +5,7 @@ Opens the native MuJoCo viewer window (needs a display, e.g. DISPLAY=:0) and
 drives the *same* dynamics as the training env using classic MuJoCo on CPU.
 
 Tasks:
-    --task franka_reach       (default) Franka reaches a target
-    --task so101_pick_place   SO-101 picks a cube and places it on the pad
+    --task so101_pick_place   (default) SO-101 picks a cube and places it on the pad
 
 Modes:
     (default)          hold the home pose -- just look around
@@ -35,19 +34,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import mujoco
 import mujoco.viewer
 
-from vision_rl.config import Config, so101_config
+from vision_rl.config import so101_config
 
 _ASSETS = os.path.join(os.path.dirname(__file__), "..", "vision_rl", "envs", "assets")
 
 # Per-task viewer settings.
 TASKS = {
-    "franka_reach": dict(
-        scene=os.path.join(_ASSETS, "franka_emika_panda", "franka_reach.xml"),
-        n_arm=7, gripper_action=False, site="gripper",
-    ),
     "so101_pick_place": dict(
-        scene=os.path.join(_ASSETS, "so101", "so101_pick_place.xml"),
-        n_arm=5, gripper_action=True, site="grasp",
+        scene=os.path.join(_ASSETS, "so101_menagerie", "so101_pick_place.xml"),
+        n_arm=5, gripper_action=True, site="gripperframe",
     ),
 }
 
@@ -75,7 +70,7 @@ def _load_policy(ck, action_size, proprio_size, pixels_shape):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--task", choices=list(TASKS), default="franka_reach")
+    ap.add_argument("--task", choices=list(TASKS), default="so101_pick_place")
     ap.add_argument("--random", action="store_true")
     ap.add_argument("--policy", type=str, default=None)
     args = ap.parse_args()
@@ -89,7 +84,7 @@ def main():
         cfg = ck.config
         args.task = cfg.task            # keeps the T/ctrl_dt lookups below honest
     else:
-        cfg = so101_config() if args.task == "so101_pick_place" else Config()
+        cfg = so101_config()
 
     T = TASKS[args.task]
     rng = np.random.default_rng(0)
@@ -98,9 +93,8 @@ def main():
     model = mujoco.MjModel.from_xml_path(os.path.abspath(T["scene"]))
     data = mujoco.MjData(model)
     sim_dt = model.opt.timestep
-    ctrl_dt = cfg.so101.ctrl_dt if args.task == "so101_pick_place" else cfg.env.ctrl_dt
-    action_scale = (cfg.so101.action_scale if args.task == "so101_pick_place"
-                    else cfg.env.action_scale)
+    ctrl_dt = cfg.so101.ctrl_dt
+    action_scale = cfg.so101.action_scale
     n_substeps = max(1, round(ctrl_dt / sim_dt))
 
     site = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, T["site"])
@@ -117,18 +111,13 @@ def main():
         data.qpos[:n_arm] += 0.05 * rng.standard_normal(n_arm)
         data.qvel[:] = 0.0
         data.ctrl[:] = home_ctrl
-        if args.task == "so101_pick_place":
-            cb = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "cube")
-            qadr = model.jnt_qposadr[model.body_jntadr[cb]]
-            data.qpos[qadr:qadr+2] = rng.uniform(cfg.so101.cube_low, cfg.so101.cube_high)
-            data.qpos[qadr+2] = cfg.so101.cube_z
-            tb = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "place_target")
-            data.mocap_pos[model.body_mocapid[tb], :2] = rng.uniform(
-                cfg.so101.target_low, cfg.so101.target_high)
-        else:
-            tb = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "target")
-            data.mocap_pos[model.body_mocapid[tb]] = rng.uniform(
-                cfg.env.target_low, cfg.env.target_high)
+        cb = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "cube")
+        qadr = model.jnt_qposadr[model.body_jntadr[cb]]
+        data.qpos[qadr:qadr+2] = rng.uniform(cfg.so101.cube_low, cfg.so101.cube_high)
+        data.qpos[qadr+2] = cfg.so101.cube_z
+        tb = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "place_target")
+        data.mocap_pos[model.body_mocapid[tb], :2] = rng.uniform(
+            cfg.so101.target_low, cfg.so101.target_high)
         mujoco.mj_forward(model, data)
 
     policy = renderer = None
@@ -153,7 +142,7 @@ def main():
 
     randomize()
     step_count = 0
-    ep_len = cfg.so101.episode_length if args.task == "so101_pick_place" else cfg.env.episode_length
+    ep_len = cfg.so101.episode_length
     print(f"[viewer] task={args.task} mode=",
           "policy" if policy else ("random" if args.random else "hold-home"))
 

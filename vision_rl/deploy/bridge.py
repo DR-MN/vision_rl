@@ -13,9 +13,15 @@ Two directions:
 All the magic numbers (home pose, per-joint control ranges, gripper range, joint
 order) are read from the same MuJoCo model the env uses, so this file has no
 hand-copied constants to drift out of sync. See:
-  * action decode      -> envs/so101_pick_place.py: SO101PickPlaceEnv.step (lines ~200-211)
+  * action decode      -> envs/so101_pick_place.py: SO101PickPlaceEnv.step (lines ~205-218,
+                           incl. the max_joint_delta slew-rate clamp on the arm)
   * proprio layout     -> envs/so101_pick_place.py: SO101PickPlaceEnv._proprio
   * frame stacking     -> envs/vision_wrapper.py: _stack_reset / _stack_push
+
+NOTE: any new *stateful, sequential* transform added to the env's step()
+(like the slew-rate clamp) must be mirrored here with matching bridge-side
+state, or scripts/verify_deploy.py will (correctly) start failing -- see the
+2026-07-23 mismatch this file's max_joint_delta clamp was added to fix.
 """
 
 from __future__ import annotations
@@ -37,10 +43,13 @@ JOINT_NAMES = (
 class SO101Bridge:
     """Stateful translator between the policy and the real robot.
 
-    Stateful because the observation carries temporal information the robot does
-    not: a rolling frame stack and a previous joint position (for finite-diff
-    velocity). Call `reset(...)` once at episode start, then `observe(...)` every
-    control step. `action_to_targets(...)` is pure.
+    Stateful for two reasons: the observation carries temporal information the
+    robot does not (a rolling frame stack and a previous joint position, for
+    finite-diff velocity), AND `action_to_targets(...)` now also carries the
+    previously-commanded arm target so it can reproduce the env's per-step
+    slew-rate limit (SO101PickPlaceEnv.step's `max_joint_delta` clamp) -- it is
+    NOT pure. Call `reset(...)` once at episode start (also re-seeds the slew
+    reference to home), then `observe(...)` every control step.
     """
 
     def __init__(self, cfg: Config):
@@ -51,6 +60,7 @@ class SO101Bridge:
         self.cfg = cfg
         self.ctrl_dt = float(cfg.so101.ctrl_dt)
         self.action_scale = float(cfg.so101.action_scale)
+        self.max_joint_delta = float(cfg.so101.max_joint_delta)
 
         # One classic MuJoCo model/data, reused for forward kinematics (grasp
         # site) and for reading the same constants the env baked into training.
@@ -83,6 +93,11 @@ class SO101Bridge:
         # Rolling state, set up by reset().
         self._frames: np.ndarray | None = None       # [H, W, frame_stack*3] uint8
         self._prev_qpos: np.ndarray | None = None     # [6] rad
+        # Slew-rate reference: the env's `state.data.ctrl[:_N_ARM]` equivalent.
+        # Initialized to home here (not just in reset()) so action_to_targets
+        # works correctly even if called before an explicit reset(), matching
+        # the env where ctrl == home_ctrl immediately after construction/reset.
+        self._prev_arm_ctrl = self._arm_home_ctrl.copy()
 
     # ------------------------------------------------------------------ #
     # Spec (for building the policy / hardware backend)
@@ -112,15 +127,26 @@ class SO101Bridge:
         """Decode a policy action into absolute joint position targets (rad).
 
         Byte-for-byte the transform in SO101PickPlaceEnv.step:
-          * arm:     residual around home, scaled by action_scale, clipped to range
-          * gripper: [-1,1] -> [closed, open] absolute command
+          * arm:     residual around home, scaled by action_scale, clipped to
+                     range, THEN slew-limited relative to the previously
+                     commanded arm target (max_joint_delta rad/step)
+          * gripper: [-1,1] -> [closed, open] absolute command (not slew-limited,
+                     same as the env)
         The result is what the sim fed to its position actuators, i.e. exactly
         what the real Feetech servos should be commanded to (in radians).
+
+        Stateful: updates `self._prev_arm_ctrl` so the next call's slew clamp
+        is relative to THIS step's output, same as the env carrying it in
+        `data.ctrl` across steps. Call `reset(...)` at episode start to
+        re-seed this to home.
         """
         action = np.clip(np.asarray(action, dtype=np.float64), -1.0, 1.0)
 
         arm = self._arm_home_ctrl + self.action_scale * action[:_N_ARM]
         arm = np.clip(arm, self._arm_low, self._arm_high)
+        arm = np.clip(arm, self._prev_arm_ctrl - self.max_joint_delta,
+                      self._prev_arm_ctrl + self.max_joint_delta)
+        self._prev_arm_ctrl = arm
 
         grip01 = 0.5 * (action[_N_ARM] + 1.0)                  # 0..1
         grip = self._grip_low + grip01 * (self._grip_high - self._grip_low)
@@ -168,12 +194,14 @@ class SO101Bridge:
         return rgb
 
     def reset(self, qpos6: np.ndarray, rgb: np.ndarray) -> dict:
-        """Start a new episode: seed the frame stack and the velocity reference."""
+        """Start a new episode: seed the frame stack, velocity reference, and
+        the action_to_targets slew reference (all reset to home, like the env)."""
         frame = self._preprocess_frame(rgb)
         # Repeat the first frame frame_stack times along channels (see
         # vision_wrapper._stack_reset).
         self._frames = np.tile(frame, (1, 1, self.frame_stack)).astype(np.uint8)
         self._prev_qpos = np.asarray(qpos6, dtype=np.float64).copy()
+        self._prev_arm_ctrl = self._arm_home_ctrl.copy()
         qvel6 = np.zeros(_N_ROBOT, dtype=np.float32)
         return {"pixels": self._frames, "proprio": self._proprio(qpos6, qvel6)}
 

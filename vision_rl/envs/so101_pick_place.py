@@ -1,9 +1,9 @@
 """Single-robot SO-101 pick-and-place environment on MuJoCo-JAX (MJX).
 
 The SO-101 (5-DoF arm + 1-DoF parallel-ish jaw gripper) must pick a cube and
-deliver it to a target pad. As with the Franka reach task, the cube and target
-positions are *not* in the proprioceptive observation -- the agent must locate
-them from the camera image (added by the vision wrapper).
+deliver it to a target pad. The cube and target positions are *not* in the
+proprioceptive observation -- the agent must locate them from the camera image
+(added by the vision wrapper).
 
 Action (6-d, all in [-1, 1]):
     [0:5] residual position targets for the 5 arm joints

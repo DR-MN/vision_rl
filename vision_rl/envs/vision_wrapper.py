@@ -1,6 +1,7 @@
 """Vectorised vision environment wrapper.
 
-Wraps `FrankaReachEnv` to:
+Wraps the base env selected by `cfg.task` (e.g. `SO101PickPlaceEnv`,
+`SO101PickEnv`) to:
   * run `num_envs` worlds in parallel via `jax.vmap`,
   * render a camera image for every world with the batch renderer,
   * stack the last `frame_stack` frames (temporal information for the CNN),
@@ -22,7 +23,7 @@ from vision_rl.rendering import make_renderer
 
 @struct.dataclass
 class VecState:
-    env_state: EnvState          # batched [B, ...]
+    env_state: object             # batched base-env state [B, ...] (task-specific struct)
     frames: jax.Array            # uint8 [B, H, W, frame_stack*3]
     render_token: object         # opaque renderer token (Madrona) or None
     obs: dict                    # {"pixels", "proprio"}

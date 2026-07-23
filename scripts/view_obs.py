@@ -30,7 +30,7 @@ import jax.numpy as jnp
 from PIL import Image
 
 from vision_rl import checkpoint as ckpt_io
-from vision_rl.config import Config, so101_config
+from vision_rl.config import so101_config
 from vision_rl.envs import VisionVecEnv
 
 
@@ -56,7 +56,7 @@ def _grid(frames, f, cols=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--task", choices=["franka_reach", "so101_pick_place"],
+    ap.add_argument("--task", choices=["so101_pick_place"],
                     default="so101_pick_place")
     ap.add_argument("--backend", choices=["warp", "cpu"], default="cpu")
     ap.add_argument("--policy", type=str, default=None,
@@ -73,8 +73,7 @@ def main():
     # With --policy the checkpoint defines the config; without it, --task picks a
     # default one (this script also runs standalone to preview random rollouts).
     ck = ckpt_io.load(args.policy) if args.policy else None
-    cfg = ck.config if ck else (
-        so101_config() if args.task == "so101_pick_place" else Config())
+    cfg = ck.config if ck else so101_config()
     cfg.render.backend = args.backend
     cfg.ppo.num_envs = max(args.envs, 1)
     if args.res:

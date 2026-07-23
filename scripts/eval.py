@@ -8,8 +8,6 @@ with any renderer backend (cpu / warp). For a visual rollout use view_env.py.
 Examples:
     python scripts/eval.py --backend warp --num-envs 64 \
         --ckpt checkpoints/so101_pick_place_vision_ppo_it500.msgpack
-    python scripts/eval.py --backend cpu \
-        --ckpt checkpoints/franka_reach_vision_ppo_it500.msgpack
 """
 
 from __future__ import annotations
