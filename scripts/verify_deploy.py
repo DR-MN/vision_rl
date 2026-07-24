@@ -1,9 +1,12 @@
 #!/usr/bin/env python
 """Prove the deploy bridge reproduces the training env's action decode + proprio.
+---run this file it will say waether the deploy bridge matches the training env or not----
 
 The whole point of vision_rl/deploy is that a policy deployed on hardware sees
 exactly what it saw in training and its actions are commanded exactly as trained.
-This asserts that numerically against the real SO101PickPlaceEnv:
+This asserts that numerically against the real env, for BOTH SO-101 tasks
+(so101_pick_place and so101_pick share the same bridge implementation -- see
+deploy/bridge.py -- so both are checked here):
 
     * action_to_targets(a)  == the ctrl the env commands for the same action
     * grasp_xyz(qpos)       == the env's proprio gripper-site position (FK)
@@ -37,7 +40,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from vision_rl.config import so101_config
+from vision_rl.config import so101_config, so101_pick_config
 from vision_rl.envs import make_env
 from vision_rl.deploy.bridge import SO101Bridge
 
@@ -47,8 +50,7 @@ from vision_rl.deploy.bridge import SO101Bridge
 GRASP_TOL_M = 6e-3
 
 
-def main():
-    cfg = so101_config()
+def _verify(task: str, cfg) -> bool:
     cfg.render.backend = "cpu"          # -> physics impl='jax'
     cfg.ppo.num_envs = 1
 
@@ -81,13 +83,22 @@ def main():
     grasp_err = np.max(np.abs(env_proprio[-3:] - bridge.grasp_xyz(qpos6)))
     qpos_err = np.max(np.abs(env_proprio[:6] - qpos6))
 
-    print(f"action decode  max|env-bridge ctrl| = {max_ctrl_err:.2e} rad")
-    print(f"grasp-site FK  max|env-bridge xyz|  = {grasp_err:.2e} m  "
+    print(f"[{task}]")
+    print(f"  action decode  max|env-bridge ctrl| = {max_ctrl_err:.2e} rad")
+    print(f"  grasp-site FK  max|env-bridge xyz|  = {grasp_err:.2e} m  "
           f"(tol {GRASP_TOL_M:.0e} m -- absorbs the known 1-substep kinematics lag)")
-    print(f"proprio qpos   max|env-bridge|      = {qpos_err:.2e} rad")
+    print(f"  proprio qpos   max|env-bridge|      = {qpos_err:.2e} rad")
     ok = max_ctrl_err < 1e-5 and grasp_err < GRASP_TOL_M and qpos_err < 1e-6
-    print("RESULT:", "PASS -- deploy matches training" if ok else "MISMATCH")
-    sys.exit(0 if ok else 1)
+    print("  RESULT:", "PASS -- deploy matches training" if ok else "MISMATCH")
+    return ok
+
+
+def main():
+    results = {
+        "so101_pick_place": _verify("so101_pick_place", so101_config()),
+        "so101_pick": _verify("so101_pick", so101_pick_config()),
+    }
+    sys.exit(0 if all(results.values()) else 1)
 
 
 if __name__ == "__main__":

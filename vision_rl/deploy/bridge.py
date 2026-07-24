@@ -1,9 +1,12 @@
-"""Sim<->real conversion layer for the SO-101 pick-and-place policy.
+"""Sim<->real conversion layer for the SO-101 pick-and-place / pick policies.
 
 This is the piece that connects a trained policy to physical hardware. It owns
 the *exact* transforms the training env applied, so a policy deployed through it
 sees the same observation layout and its actions are decoded the same way it was
-trained -- no silent unit/scale mismatch between sim and real.
+trained -- no silent unit/scale mismatch between sim and real. Supports both
+`so101_pick_place` and `so101_pick` (cfg.task selects the scene + task config;
+both use the same robot, action layout, and proprio layout, so one bridge
+implementation covers both).
 
 Two directions:
 
@@ -15,10 +18,11 @@ order) are read from the same MuJoCo model the env uses, so this file has no
 hand-copied constants to drift out of sync. See:
   * action decode      -> envs/so101_pick_place.py: SO101PickPlaceEnv.step (lines ~205-218,
                            incl. the max_joint_delta slew-rate clamp on the arm)
+                           (so101_pick.py's step is the same transform, pick-only reward)
   * proprio layout     -> envs/so101_pick_place.py: SO101PickPlaceEnv._proprio
   * frame stacking     -> envs/vision_wrapper.py: _stack_reset / _stack_push
 
-NOTE: any new *stateful, sequential* transform added to the env's step()
+NOTE: any new *stateful, sequential* transform added to either env's step()
 (like the slew-rate clamp) must be mirrored here with matching bridge-side
 state, or scripts/verify_deploy.py will (correctly) start failing -- see the
 2026-07-23 mismatch this file's max_joint_delta clamp was added to fix.
@@ -30,7 +34,14 @@ import numpy as np
 import mujoco
 
 from vision_rl.config import Config
-from vision_rl.envs.so101_pick_place import _SCENE_XML, _N_ARM, _N_ROBOT
+from vision_rl.envs.so101_pick_place import _SCENE_XML as _SCENE_XML_PICK_PLACE
+from vision_rl.envs.so101_pick_place import _N_ARM, _N_ROBOT
+from vision_rl.envs.so101_pick import _SCENE_XML as _SCENE_XML_PICK
+
+_SCENE_XML_BY_TASK = {
+    "so101_pick_place": _SCENE_XML_PICK_PLACE,
+    "so101_pick": _SCENE_XML_PICK,
+}
 
 # Real-servo joint order (matches the MJCF <actuator> order and LeRobot's
 # SO101Follower motor order). Exposed so the hardware backend can map 1:1.
@@ -47,24 +58,29 @@ class SO101Bridge:
     robot does not (a rolling frame stack and a previous joint position, for
     finite-diff velocity), AND `action_to_targets(...)` now also carries the
     previously-commanded arm target so it can reproduce the env's per-step
-    slew-rate limit (SO101PickPlaceEnv.step's `max_joint_delta` clamp) -- it is
-    NOT pure. Call `reset(...)` once at episode start (also re-seeds the slew
-    reference to home), then `observe(...)` every control step.
+    slew-rate limit (SO101PickPlaceEnv/SO101PickEnv.step's `max_joint_delta`
+    clamp) -- it is NOT pure. Call `reset(...)` once at episode start (also
+    re-seeds the slew reference to home), then `observe(...)` every control step.
     """
 
     def __init__(self, cfg: Config):
-        if cfg.task != "so101_pick_place":
+        if cfg.task not in _SCENE_XML_BY_TASK:
             raise ValueError(
-                f"SO101Bridge only supports task 'so101_pick_place', got {cfg.task!r}"
+                f"SO101Bridge only supports {list(_SCENE_XML_BY_TASK)}, got {cfg.task!r}"
             )
         self.cfg = cfg
-        self.ctrl_dt = float(cfg.so101.ctrl_dt)
-        self.action_scale = float(cfg.so101.action_scale)
-        self.max_joint_delta = float(cfg.so101.max_joint_delta)
+        self.task = cfg.task
+        # so101_pick_place and so101_pick each have their own config sub-object
+        # (cfg.so101 / cfg.pick), but both expose the same field names for
+        # everything the bridge needs -- see config.py SO101Config/SO101PickConfig.
+        task_cfg = cfg.so101 if cfg.task == "so101_pick_place" else cfg.pick
+        self.ctrl_dt = float(task_cfg.ctrl_dt)
+        self.action_scale = float(task_cfg.action_scale)
+        self.max_joint_delta = float(task_cfg.max_joint_delta)
 
         # One classic MuJoCo model/data, reused for forward kinematics (grasp
         # site) and for reading the same constants the env baked into training.
-        self.model = mujoco.MjModel.from_xml_path(_SCENE_XML)
+        self.model = mujoco.MjModel.from_xml_path(_SCENE_XML_BY_TASK[cfg.task])
         self._fk_data = mujoco.MjData(self.model)
 
         m = self.model

@@ -66,7 +66,7 @@ class SO101PickConfig:
     """SO-101 pick-only environment settings (grasp + lift, no place)."""
 
     episode_length: int = 250
-    ctrl_dt: float = 0.02
+    ctrl_dt: float = 0.03
     action_scale: float = 0.9
     # Per-control-step slew limit on arm joint targets (rad); see SO101Config.
     max_joint_delta: float = 0.08

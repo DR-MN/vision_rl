@@ -24,7 +24,14 @@ import numpy as np
 import mujoco
 
 from vision_rl.config import Config
-from vision_rl.envs.so101_pick_place import _SCENE_XML, _N_ARM, _N_ROBOT
+from vision_rl.envs.so101_pick_place import _SCENE_XML as _SCENE_XML_PICK_PLACE
+from vision_rl.envs.so101_pick_place import _N_ARM, _N_ROBOT
+from vision_rl.envs.so101_pick import _SCENE_XML as _SCENE_XML_PICK
+
+_SCENE_XML_BY_TASK = {
+    "so101_pick_place": _SCENE_XML_PICK_PLACE,
+    "so101_pick": _SCENE_XML_PICK,
+}
 
 
 class RobotBackend(abc.ABC):
@@ -56,18 +63,25 @@ class SimRobot(RobotBackend):
     re-run of the training env. Physics is stepped `n_substeps` per control step,
     matching ctrl_dt, and the overhead camera is rendered at the training
     resolution -- the best case for the vision policy (pixels ~identical to what
-    it trained on).
+    it trained on). Supports both `so101_pick_place` (cube + place-target pad)
+    and `so101_pick` (cube only, no place-target body in that scene).
     """
 
     def __init__(self, cfg: Config, seed: int = 0, randomize: bool = True):
         self.cfg = cfg
-        self.model = mujoco.MjModel.from_xml_path(_SCENE_XML)
+        if cfg.task not in _SCENE_XML_BY_TASK:
+            raise ValueError(
+                f"SimRobot only supports {list(_SCENE_XML_BY_TASK)}, got {cfg.task!r}")
+        self._has_target = cfg.task == "so101_pick_place"
+        task_cfg = cfg.so101 if cfg.task == "so101_pick_place" else cfg.pick
+
+        self.model = mujoco.MjModel.from_xml_path(_SCENE_XML_BY_TASK[cfg.task])
         self.data = mujoco.MjData(self.model)
         self._rng = np.random.default_rng(seed)
         self._randomize = randomize
 
         sim_dt = float(self.model.opt.timestep)
-        self.n_substeps = max(1, round(float(cfg.so101.ctrl_dt) / sim_dt))
+        self.n_substeps = max(1, round(float(task_cfg.ctrl_dt) / sim_dt))
 
         m = self.model
         self._home_qpos = np.asarray(m.key_qpos[0], dtype=np.float64)
@@ -75,14 +89,16 @@ class SimRobot(RobotBackend):
 
         cube_body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "cube")
         self._cube_qadr = int(m.jnt_qposadr[m.body_jntadr[cube_body]])
-        tgt_body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "place_target")
-        self._tgt_mocap = int(m.body_mocapid[tgt_body])
 
-        self._cube_low = np.asarray(cfg.so101.cube_low)
-        self._cube_high = np.asarray(cfg.so101.cube_high)
-        self._tgt_low = np.asarray(cfg.so101.target_low)
-        self._tgt_high = np.asarray(cfg.so101.target_high)
-        self._cube_z = float(cfg.so101.cube_z)
+        self._cube_low = np.asarray(task_cfg.cube_low)
+        self._cube_high = np.asarray(task_cfg.cube_high)
+        self._cube_z = float(task_cfg.cube_z)
+
+        if self._has_target:
+            tgt_body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "place_target")
+            self._tgt_mocap = int(m.body_mocapid[tgt_body])
+            self._tgt_low = np.asarray(task_cfg.target_low)
+            self._tgt_high = np.asarray(task_cfg.target_high)
 
         self._cam = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, cfg.render.camera)
         if self._cam < 0:
@@ -100,8 +116,9 @@ class SimRobot(RobotBackend):
             cube_xy = self._rng.uniform(self._cube_low, self._cube_high)
             d.qpos[self._cube_qadr:self._cube_qadr + 2] = cube_xy
             d.qpos[self._cube_qadr + 2] = self._cube_z
-            tgt_xy = self._rng.uniform(self._tgt_low, self._tgt_high)
-            d.mocap_pos[self._tgt_mocap] = [tgt_xy[0], tgt_xy[1], 0.001]
+            if self._has_target:
+                tgt_xy = self._rng.uniform(self._tgt_low, self._tgt_high)
+                d.mocap_pos[self._tgt_mocap] = [tgt_xy[0], tgt_xy[1], 0.001]
         d.ctrl[:] = self._home_ctrl
         mujoco.mj_forward(self.model, d)
         return self.read_joints()
