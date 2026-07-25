@@ -12,6 +12,7 @@ Writes two images:
 Examples:
   python scripts/view_obs.py --task so101_pick_place --backend warp --steps 20
   python scripts/view_obs.py --task so101_pick_place --backend cpu --policy checkpoints/xxx.msgpack
+  python scripts/view_obs.py --task so101_pick --backend cpu --steps 20
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ import jax.numpy as jnp
 from PIL import Image
 
 from vision_rl import checkpoint as ckpt_io
-from vision_rl.config import so101_config
+from vision_rl.config import so101_config, so101_pick_config
 from vision_rl.envs import VisionVecEnv
 
 
@@ -56,7 +57,7 @@ def _grid(frames, f, cols=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--task", choices=["so101_pick_place"],
+    ap.add_argument("--task", choices=["so101_pick_place", "so101_pick"],
                     default="so101_pick_place")
     ap.add_argument("--backend", choices=["warp", "cpu"], default="cpu")
     ap.add_argument("--policy", type=str, default=None,
@@ -73,7 +74,10 @@ def main():
     # With --policy the checkpoint defines the config; without it, --task picks a
     # default one (this script also runs standalone to preview random rollouts).
     ck = ckpt_io.load(args.policy) if args.policy else None
-    cfg = ck.config if ck else so101_config()
+    if ck:
+        cfg = ck.config
+    else:
+        cfg = so101_config() if args.task == "so101_pick_place" else so101_pick_config()
     cfg.render.backend = args.backend
     cfg.ppo.num_envs = max(args.envs, 1)
     if args.res:

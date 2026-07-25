@@ -136,6 +136,19 @@ class SO101Bridge:
         normalized 0..100 gripper command."""
         return (self._grip_low, self._grip_high)
 
+    @property
+    def joint_limits_rad(self) -> dict[str, tuple[float, float]]:
+        """{joint_name: (low, high)} in rad, in JOINT_NAMES order -- the sim's
+        actuator ctrlrange, i.e. what training assumed the real servo range to
+        be. Compare against the real robot's calibrated range before trusting
+        hardware (see scripts/check_calibration.py): a mismatch means the
+        policy can command targets the real arm can't safely reach, or
+        `home_targets()` can land somewhere unexpected (e.g. into the table)."""
+        limits = {n: (float(lo), float(hi)) for n, lo, hi in
+                  zip(JOINT_NAMES[:-1], self._arm_low, self._arm_high)}
+        limits[JOINT_NAMES[-1]] = (self._grip_low, self._grip_high)
+        return limits
+
     # ------------------------------------------------------------------ #
     # Model action -> real joint targets
     # ------------------------------------------------------------------ #

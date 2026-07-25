@@ -98,6 +98,19 @@ Joints come from LeRobot (`--port`); camera frames come from the OpenCV
   or sign drives the arm the wrong way.
 - **Home pose.** The runner slews to `bridge.home_targets()` before/after a run.
   Verify that pose is safe and matches the sim home visually.
+- **Use `scripts/check_calibration.py` to verify both interactively**, instead of
+  guessing from a crash: it opens a MuJoCo viewer, and (with `--port`) commands
+  the real arm to mirror it. ENTER slews both to the trained home pose (slow,
+  small per-tick step, never a jump — keep a hand near the e-stop for this the
+  first time); keys `1`-`6` select a joint and `+`/`-` jog just that one, so a
+  sign/offset bug shows up as one joint diverging instead of the whole arm
+  moving wrong. It also exposes `SO101Bridge.joint_limits_rad` (the sim's
+  per-joint `ctrlrange`, in rad) so you can compare against the real servo's
+  calibrated range directly.
+
+  ```bash
+  python scripts/check_calibration.py --task so101_pick_place --port /dev/ttyACM0
+  ```
 - **Camera pose.** The policy only knows the `overhead_cam` viewpoint
   (`pos="0.16 -0.42 0.34"`, looking at the workspace from −y, ~58° down, in
   [so101_pick_place.xml](../vision_rl/envs/assets/so101_menagerie/so101_pick_place.xml)).

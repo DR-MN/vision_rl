@@ -61,10 +61,13 @@
   </worldbody>
 
   <keyframe>
-    <!-- home: 5 arm joints + gripper(open) then cube freejoint (xyz + quat).
-         Arm hovers the gripper pointing down over the workspace centre. -->
+    <!-- home: 5 arm joints + gripper(closed) then cube freejoint (xyz + quat).
+         Recalibrated against the real arm (scripts/check_calibration.py) after
+         fixing the wrist_roll sim/real offset via that joint's `ref` in
+         so101.xml -- the previous home commanded a pose that hit the table on
+         hardware. This one was jogged and verified safe on the real robot. -->
     <key name="home"
-      qpos="0.0896 -0.4398 0.4903 1.6006 1.5859 1.745  0.18 0.0 0.0175 1 0 0 0"
-      ctrl="0.0896 -0.4398 0.4903 1.6006 1.5859 1.745"/>
+      qpos="0.08954 -1.74533 1.64009 0.95068 1.58598 -0.17453  0.18 0.0 0.0175 1 0 0 0"
+      ctrl="0.08954 -1.74533 1.64009 0.95068 1.58598 -0.17453"/>
   </keyframe>
 </mujoco>
