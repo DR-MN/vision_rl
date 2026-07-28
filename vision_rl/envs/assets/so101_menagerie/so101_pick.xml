@@ -58,9 +58,23 @@
          Recalibrated against the real arm (scripts/check_calibration.py) after
          fixing the wrist_roll sim/real offset via that joint's `ref` in
          so101.xml -- the previous home commanded a pose that hit the table on
-         hardware. This one was jogged and verified safe on the real robot. -->
+         hardware. That pose was jogged and verified safe on the real robot.
+
+         wrist_flex RAISED 0.95068 -> 0.45 (2026-07-23): the verified pose put
+         the grasp site at z=0.0169 -- i.e. AT cube height and INSIDE the cube
+         spawn box (home gripper xy = 0.183,-0.013) -- so ~16% of resets spawned
+         the cube interpenetrating the closed jaw by up to 12.7mm, which
+         detonated on the first step (qvel spikes, occasional NaN). It was also
+         below table_clear=0.02, firing the table penalty at every reset.
+         Raising the wrist lifts the grasp site to z=0.0789 (~8cm, the hover
+         height the top-down reward targets) and drops cube-in-gripper to 0%.
+         Verified to cost nothing in reach: top-down coverage of the spawn box
+         is unchanged (96.7% @25deg, 100% @35deg at action_scale=1.8).
+         NOTE: this pose differs from the hardware-jogged one -- re-verify on
+         the real arm before deploying. It moves the wrist AWAY from the table,
+         so it is the safe direction. -->
     <key name="home"
-      qpos="0.08954 -1.74533 1.64009 0.95068 1.58598 -0.17453  0.18 0.0 0.0175 1 0 0 0"
-      ctrl="0.08954 -1.74533 1.64009 0.95068 1.58598 -0.17453"/>
+      qpos="0.08954 -1.74533 1.64009 0.45 1.58598 -0.17453  0.18 0.0 0.0175 1 0 0 0"
+      ctrl="0.08954 -1.74533 1.64009 0.45 1.58598 -0.17453"/>
   </keyframe>
 </mujoco>

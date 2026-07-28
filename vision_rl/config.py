@@ -67,8 +67,17 @@ class SO101PickConfig:
 
     episode_length: int = 250
     ctrl_dt: float = 0.03
-    action_scale: float = 0.9
+    # Residual joint-target range (rad) around home. 1.8 (not 0.9): the
+    # recalibrated home pins shoulder_lift EXACTLY at its lower limit
+    # (-1.745) and elbow_flex 0.05 rad from its upper limit, so a 0.9
+    # residual capped the gripper at x=0.234 m -- short of the spawn box and
+    # leaving ~46% of episodes physically ungraspable. 1.8 lets shoulder_lift
+    # reach +0.05, giving ~0.32 m reach and full spawn coverage. Verified by
+    # FK sweep: 98% of this spawn box supports hover+descend top-down picks
+    # (100% at a 35deg gripper-tilt tolerance).
+    action_scale: float = 1.8
     # Per-control-step slew limit on arm joint targets (rad); see SO101Config.
+    # Keeps the arm slow even though action_scale is large.
     max_joint_delta: float = 0.08
 
     # Cube spawn region (metres); see SO101Config.cube_low/high.
@@ -76,10 +85,20 @@ class SO101PickConfig:
     cube_high: Tuple[float, float] = (0.27, 0.13)
     cube_z: float = 0.0175              # cube half-height = resting height (3.5 cm cube)
 
-    grasp_dist: float = 0.045
+    grasp_dist: float = 0.045          # horizontal radius gating the table penalty
 
-    # Reward shaping (staged: reach -> grasp -> lift).
-    reach_scale: float = 1.0
+    # --- TOP-DOWN approach shaping -------------------------------------- #
+    # The pick is staged as: get the gripper horizontally OVER the cube, then
+    # descend onto it. Reach is therefore split into a horizontal component
+    # (align) and a vertical one (descend), and the descent reward only pays
+    # while aligned -- so a sideways swipe into the cube earns nothing.
+    align_tol: float = 0.02            # horizontal offset counted as "over the cube"
+    grasp_z_tol: float = 0.03          # |gripper_z - cube_z| allowed for a grasp
+    align_scale: float = 1.0           # pull the gripper over the cube (horizontal)
+    align_progress_scale: float = 3.0  # per-step horizontal progress
+    descend_progress_scale: float = 3.0  # per-step descent progress (gated on aligned)
+
+    # Reward shaping (staged: align -> descend -> grasp -> lift).
     grasp_bonus_scale: float = 0.5
     lift_scale: float = 4.0
     lift_thresh: float = 0.0525        # cube_z above which it counts as lifted (3.5cm off table)
@@ -89,8 +108,6 @@ class SO101PickConfig:
     table_penalty_scale: float = 0.5
     # Virtual clearance plane above the table top (z=0); see SO101Config.table_clear.
     table_clear: float = 0.02
-
-    reach_progress_scale: float = 3.0
 
 
 @dataclass

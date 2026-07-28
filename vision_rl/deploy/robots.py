@@ -86,6 +86,11 @@ class SimRobot(RobotBackend):
         m = self.model
         self._home_qpos = np.asarray(m.key_qpos[0], dtype=np.float64)
         self._home_ctrl = np.asarray(m.key_ctrl[0], dtype=np.float64)
+        # Joint limits for clamping the randomized reset pose -- the calibrated
+        # home sits on shoulder_lift's limit, so unclamped noise starts the arm
+        # out-of-range and the solver blows up. Mirrors the training envs.
+        self._arm_qpos_low = np.asarray(m.jnt_range[:_N_ARM, 0], dtype=np.float64)
+        self._arm_qpos_high = np.asarray(m.jnt_range[:_N_ARM, 1], dtype=np.float64)
 
         cube_body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "cube")
         self._cube_qadr = int(m.jnt_qposadr[m.body_jntadr[cube_body]])
@@ -112,7 +117,9 @@ class SimRobot(RobotBackend):
         mujoco.mj_resetData(self.model, d)
         d.qpos[:] = self._home_qpos
         if self._randomize:
-            d.qpos[:_N_ARM] += 0.05 * self._rng.standard_normal(_N_ARM)
+            d.qpos[:_N_ARM] = np.clip(
+                d.qpos[:_N_ARM] + 0.05 * self._rng.standard_normal(_N_ARM),
+                self._arm_qpos_low, self._arm_qpos_high)
             cube_xy = self._rng.uniform(self._cube_low, self._cube_high)
             d.qpos[self._cube_qadr:self._cube_qadr + 2] = cube_xy
             d.qpos[self._cube_qadr + 2] = self._cube_z

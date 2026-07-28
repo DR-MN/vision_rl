@@ -1,12 +1,16 @@
 #!/usr/bin/env python
-"""Faithful SO-101 pick-and-place viewer — deterministic (deployment) policy.
+"""Faithful SO-101 viewer — deterministic (deployment) policy.
+
+Supports BOTH SO-101 tasks (picked automatically from the checkpoint's
+cfg.task): so101_pick_place (pick + carry to a target pad) and so101_pick
+(pick + lift above pick_height, no place stage).
 
 Why this exists (vs view_env.py):
     view_env.py re-implements the dynamics with plain `mj_step` and can drift
     from the real training env. This script instead drives the ACTUAL training
-    env (SO101PickPlaceEnv: menagerie SO-101, real physical grasping, staged
-    reward, identical dynamics) and mirrors its state into a passive MuJoCo
-    window, so what you see matches training exactly.
+    env (SO101PickPlaceEnv or SO101PickEnv: menagerie SO-101, real physical
+    grasping, staged reward, identical dynamics) and mirrors its state into a
+    passive MuJoCo window, so what you see matches training exactly.
 
 Deterministic only: a deployed / real-world policy uses the mean action
 (`pi.mode()`), not the exploration noise used while training, so that is what we
@@ -14,6 +18,9 @@ show — no stochastic flag.
 
     MUJOCO_GL=glfw python scripts/view_env2.py \
         --ckpt checkpoints/so101_pick_place_vision_ppo_step49804800.msgpack
+
+    MUJOCO_GL=glfw python scripts/view_env2.py \
+        --ckpt checkpoints/so101_pick_vision_ppo_20260723-105813/so101_pick_vision_ppo_step4992.msgpack
 
     # verify a checkpoint without a display (prints grasp/lift/success stats):
     MUJOCO_GL=osmesa python scripts/view_env2.py --ckpt <ckpt> --headless 250
@@ -36,7 +43,15 @@ import jax
 import jax.numpy as jnp
 from vision_rl import checkpoint as ckpt_io
 from vision_rl.envs.so101_pick_place import SO101PickPlaceEnv
+from vision_rl.envs.so101_pick import SO101PickEnv
 from vision_rl.train import _build_network
+
+_ENV_BY_TASK = {
+    "so101_pick_place": lambda cfg: SO101PickPlaceEnv(cfg.so101, impl="jax"),
+    "so101_pick": lambda cfg: SO101PickEnv(cfg.pick, impl="jax"),
+}
+# What the final "success" metric means per task, for the headless stats label.
+_SUCCESS_LABEL = {"so101_pick_place": "placed", "so101_pick": "picked"}
 
 
 def main():
@@ -48,12 +63,15 @@ def main():
     args = ap.parse_args()
 
     ck = ckpt_io.load(args.ckpt)
-    cfg = ck.config                      # resolution, reward shaping, action scale
+    cfg = ck.config                      # resolution, reward shaping, action scale, task
     res = cfg.render.width
     k = cfg.encoder.frame_stack
 
+    if cfg.task not in _ENV_BY_TASK:
+        raise ValueError(f"view_env2.py supports {list(_ENV_BY_TASK)}, got {cfg.task!r}")
+
     # The real training env (CPU MJX): physical grasping + exact staged dynamics.
-    env = SO101PickPlaceEnv(cfg.so101, impl="jax")
+    env = _ENV_BY_TASK[cfg.task](cfg)
 
     # Policy built exactly as in training (tanh mean, LayerNorm, log_std clamp).
     net = _build_network(cfg, env.action_size)
@@ -93,7 +111,7 @@ def main():
                          else np.concatenate([b[..., 3:], rgb], axis=-1))
         return {"pixels": frames["buf"][None], "proprio": np.asarray(s.obs)[None]}
 
-    ep = cfg.so101.episode_length
+    ep = env.cfg.episode_length
     key = jax.random.PRNGKey(args.seed)
     s = reset(key)
 
@@ -106,22 +124,23 @@ def main():
             action = np.asarray(policy(get_obs(s)))
             s = step(s, jnp.asarray(action))
             grasped |= bool(s.grasped > 0.5)
-            lifted |= bool(s.metrics["cube_z"] > 0.06)
+            lifted |= bool(s.metrics["cube_z"] > env.cfg.lift_thresh)
             success |= bool(s.metrics["success"] > 0.5)
             if bool(s.done) or (i + 1) % ep == 0:
                 n_ep += 1; picks += grasped; lifts += lifted; succ += success
                 key, sub = jax.random.split(key); s = reset(sub)
                 frames["buf"] = None
                 grasped = lifted = success = False
-        print(f"\n[headless] deterministic policy over {n_ep} episode(s), res={res}")
-        print(f"  grasped : {picks}/{n_ep}")
-        print(f"  lifted  : {lifts}/{n_ep}")
-        print(f"  placed  : {succ}/{n_ep}")
+        succ_label = _SUCCESS_LABEL[cfg.task]
+        print(f"\n[headless] task={cfg.task} deterministic policy over {n_ep} episode(s), res={res}")
+        print(f"  grasped        : {picks}/{n_ep}")
+        print(f"  lifted         : {lifts}/{n_ep}")
+        print(f"  {succ_label:<15}: {succ}/{n_ep}")
         print("  (physical grasping — the gripper must really close on the cube)")
         return
 
     # ---------------- interactive window ----------------
-    print(f"[view_env2] deterministic (pi.mode) | res={res} | physical grasping")
+    print(f"[view_env2] task={cfg.task} | deterministic (pi.mode) | res={res} | physical grasping")
     print("            press Tab / '[' / ']' to cycle cameras (incl. overhead_cam)")
     with mujoco.viewer.launch_passive(model, data) as viewer:
         t = 0

@@ -91,6 +91,15 @@ class SO101PickPlaceEnv:
         ctrlrange = jnp.asarray(m.actuator_ctrlrange)
         self._arm_ctrl_low = ctrlrange[:_N_ARM, 0]
         self._arm_ctrl_high = ctrlrange[:_N_ARM, 1]
+        # JOINT (not ctrl) limits, for clamping the randomized reset pose. The
+        # calibrated home sits EXACTLY on shoulder_lift's lower limit and 0.05
+        # rad from elbow_flex's upper limit, so the reset noise below would
+        # otherwise start ~58% of episodes with a joint outside its range --
+        # the solver then applies a huge corrective impulse (qvel spikes to
+        # 1000+ rad/s, sometimes NaN). Clamping keeps every reset feasible.
+        jnt_range = jnp.asarray(m.jnt_range[:_N_ARM])
+        self._arm_qpos_low = jnt_range[:, 0]
+        self._arm_qpos_high = jnt_range[:, 1]
         self._grip_low = float(ctrlrange[_N_ARM, 0])
         self._grip_high = float(ctrlrange[_N_ARM, 1])
 
@@ -161,6 +170,10 @@ class SO101PickPlaceEnv:
 
         qpos = self._home_qpos.at[:_N_ARM].add(
             0.05 * jax.random.normal(q_rng, (_N_ARM,))
+        )
+        # Keep the perturbed start pose inside the joint limits (see __init__).
+        qpos = qpos.at[:_N_ARM].set(
+            jnp.clip(qpos[:_N_ARM], self._arm_qpos_low, self._arm_qpos_high)
         )
         # Randomize cube xy in the spawn region.
         cube_xy = jax.random.uniform(

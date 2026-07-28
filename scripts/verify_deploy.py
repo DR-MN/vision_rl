@@ -78,6 +78,19 @@ def _verify(task: str, cfg) -> bool:
         max_ctrl_err = max(max_ctrl_err, np.max(np.abs(env_ctrl - bridge_ctrl)))
 
     # 2) proprio + grasp-site forward kinematics.
+    # SETTLE FIRST. `data.site_xpos` after a step reflects the qpos from BEFORE
+    # that step's integration (see the module docstring), so comparing it to a
+    # fresh FK of the post-step qpos while the arm is still moving measures
+    # "how far the arm travelled in one 5ms substep", not whether the bridge's
+    # FK is correct. Holding the action until the arm stops removes that
+    # velocity term and leaves a true kinematics comparison -- which is what
+    # this check is for. The staleness itself is a known, accepted property of
+    # the env (docstring); it is not a bridge bug and is not what we gate on.
+    hold = np.zeros(bridge.action_dim)
+    for _ in range(60):
+        state = vstep(state, jnp.asarray(hold)[None])
+    qvel_max = float(np.max(np.abs(np.asarray(state.data.qvel[0, :6]))))
+
     env_proprio = np.asarray(state.obs[0])
     qpos6 = np.asarray(state.data.qpos[0, :6])
     grasp_err = np.max(np.abs(env_proprio[-3:] - bridge.grasp_xyz(qpos6)))
@@ -86,7 +99,7 @@ def _verify(task: str, cfg) -> bool:
     print(f"[{task}]")
     print(f"  action decode  max|env-bridge ctrl| = {max_ctrl_err:.2e} rad")
     print(f"  grasp-site FK  max|env-bridge xyz|  = {grasp_err:.2e} m  "
-          f"(tol {GRASP_TOL_M:.0e} m -- absorbs the known 1-substep kinematics lag)")
+          f"(tol {GRASP_TOL_M:.0e} m; measured settled, max|qvel|={qvel_max:.3f} rad/s)")
     print(f"  proprio qpos   max|env-bridge|      = {qpos_err:.2e} rad")
     ok = max_ctrl_err < 1e-5 and grasp_err < GRASP_TOL_M and qpos_err < 1e-6
     print("  RESULT:", "PASS -- deploy matches training" if ok else "MISMATCH")
