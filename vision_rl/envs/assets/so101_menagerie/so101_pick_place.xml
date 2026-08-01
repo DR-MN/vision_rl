@@ -74,9 +74,16 @@
          which detonated on the first step. It was also below table_clear=0.02,
          firing the table penalty at every reset. See so101_pick.xml for the
          full measurements. Re-verify on the real arm before deploying; the
-         change moves the wrist AWAY from the table (the safe direction). -->
+         change moves the wrist AWAY from the table (the safe direction).
+
+         wrist_roll 1.58598 -> 0.0 (2026-08-01), kept in sync with
+         so101_pick.xml (same robot/jaw geometry, same grasp-phase bug): the
+         moving jaw hit the tabletop when open at grasp height for wrist_roll
+         in roughly [52,140] deg (front-to-back opening); [-157,35] deg is
+         clear across the whole gripper-open range. See so101_pick.xml for the
+         contact-sweep measurements. -->
     <key name="home"
-      qpos="0.08954 -1.74533 1.64009 0.45 1.58598 -0.17453  0.18 0.0 0.0175 1 0 0 0"
-      ctrl="0.08954 -1.74533 1.64009 0.45 1.58598 -0.17453"/>
+      qpos="0.08954 -1.74533 1.64009 0.45 0.0 -0.17453  0.18 0.0 0.0175 1 0 0 0"
+      ctrl="0.08954 -1.74533 1.64009 0.45 0.0 -0.17453"/>
   </keyframe>
 </mujoco>
