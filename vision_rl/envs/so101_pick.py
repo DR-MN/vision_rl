@@ -200,7 +200,8 @@ class SO101PickEnv:
         metrics = {"dist": d_reach, "success": jnp.float32(0.0),
                    "cube_z": cube0[2], "lifted": jnp.float32(0.0),
                    "table_hit": jnp.float32(0.0),
-                   "d_xy": d_xy0, "aligned": jnp.float32(0.0)}
+                   "d_xy": d_xy0, "aligned": jnp.float32(0.0),
+                   "grip_open": jnp.float32(0.0)}
         return SO101PickState(
             data=data, obs=obs,
             reward=jnp.float32(0.0), done=jnp.float32(0.0),
@@ -253,6 +254,7 @@ class SO101PickEnv:
         # Gripper-closing command (action[5] < 0 -> closing); shaping so the jaw
         # tends to close when the fingers are actually at the cube.
         grip_closing = (0.5 * (action[_N_ARM] + 1.0) < 0.5).astype(jnp.float32)
+        grip_open = 1.0 - grip_closing
         # A grasp now requires a genuine TOP-DOWN pose: over the cube AND at
         # cube height. A sideways approach that happens to be within 4.5cm no
         # longer counts (that was the old 3-D `d_reach < grasp_dist` test).
@@ -278,12 +280,25 @@ class SO101PickEnv:
         align_r = -self.cfg.align_scale * d_xy * approach_gate
         align_pr = (self.cfg.align_progress_scale
                     * (state.prev_d_xy - d_xy) * approach_gate)
-        # --- Stage 2: descend onto it. Gated on `aligned`, so lowering the
-        # gripper only pays once it is above the cube -- this is what makes the
-        # policy go up-and-over instead of swiping in sideways.
+        # --- Stage 2: OPEN the jaw before coming down. Pays while aligned over
+        # the cube but still ABOVE it (dz > grasp_z_tol). Without this, every
+        # gripper term rewarded closing and none rewarded opening, so the policy
+        # learned to keep the jaw shut and merely bump the cube -- a closed jaw
+        # cannot enclose it, so grasp/lift/success never fired.
+        above_cube = (dz > self.cfg.grasp_z_tol).astype(jnp.float32)
+        descending = aligned * above_cube
+        open_r = (self.cfg.open_bonus_scale * descending * grip_open
+                  * approach_gate)
+        # --- Stage 3: descend onto it. Gated on `aligned` (so lowering only
+        # pays once above the cube -- go up-and-over, not a sideways swipe) AND
+        # on `grip_open`, which makes opening a hard PREREQUISITE for earning
+        # any descent reward, enforcing align -> open -> descend order.
         descend_pr = (self.cfg.descend_progress_scale
-                      * (state.prev_dz - dz) * aligned * approach_gate)
+                      * (state.prev_dz - dz) * aligned * grip_open
+                      * approach_gate)
         # Grasp bonus stays on while the cube is held, even above the lift line.
+        # Active in the complementary height band to `open_r` (|dz| <
+        # grasp_z_tol vs dz > grasp_z_tol), so the two hand off during descent.
         grasp_r = self.cfg.grasp_bonus_scale * held
         # The physical lift signal: the cube only rises if it is really gripped.
         # Caps at pick_height -- the reward saturates once the goal height is hit.
@@ -294,7 +309,7 @@ class SO101PickEnv:
         # (covers both diving into the table and side-approaching at cube height).
         table_hit = self._table_dive(data, d_xy)
         table_pen = self.cfg.table_penalty_scale * table_hit
-        reward = (align_r + align_pr + descend_pr + grasp_r + lift_r
+        reward = (align_r + align_pr + open_r + descend_pr + grasp_r + lift_r
                   + succ_r - ctrl_cost - table_pen)
 
         step_count = state.step_count + 1
@@ -303,7 +318,11 @@ class SO101PickEnv:
         obs = self._proprio(data)
         metrics = {"dist": d_reach, "success": success, "cube_z": cube[2],
                    "lifted": lifted_now, "table_hit": table_hit,
-                   "d_xy": d_xy, "aligned": aligned}
+                   "d_xy": d_xy, "aligned": aligned,
+                   # Fraction of steps the jaw is commanded open -- watch this
+                   # to confirm the policy stops holding the jaw permanently
+                   # shut (it sat near 0 before open_r was added).
+                   "grip_open": grip_open}
         return state.replace(
             data=data, obs=obs, reward=reward, done=done,
             was_picked=ever_picked, grasped=lifted_now,

@@ -96,9 +96,21 @@ class SO101PickConfig:
     grasp_z_tol: float = 0.03          # |gripper_z - cube_z| allowed for a grasp
     align_scale: float = 1.0           # pull the gripper over the cube (horizontal)
     align_progress_scale: float = 3.0  # per-step horizontal progress
-    descend_progress_scale: float = 3.0  # per-step descent progress (gated on aligned)
+    # Per-step descent progress. Gated on aligned AND on the jaw being OPEN --
+    # see open_bonus_scale below for why the open gate is there.
+    descend_progress_scale: float = 3.0
 
-    # Reward shaping (staged: align -> descend -> grasp -> lift).
+    # Reward shaping (staged: align -> OPEN -> descend -> grasp -> lift).
+    # Rewards holding the jaw OPEN while aligned over the cube but still above
+    # it. Without this every gripper term rewarded CLOSING (grasp_bonus, the
+    # `held` precondition on success) and nothing rewarded opening, so a trained
+    # policy kept the jaw shut permanently, approached correctly, and just
+    # bumped the cube -- a closed jaw cannot enclose the 4.5cm cube, so grasp/
+    # lift/success could never fire and there was no gradient out of it.
+    # Matched to grasp_bonus_scale so neither open nor close dominates; they are
+    # active in different height bands (open while dz > grasp_z_tol, close while
+    # |dz| < grasp_z_tol) so they hand off naturally during the descent.
+    open_bonus_scale: float = 0.5
     grasp_bonus_scale: float = 0.5
     lift_scale: float = 4.0
     lift_thresh: float = 0.0525        # cube_z above which it counts as lifted (3.5cm off table)
