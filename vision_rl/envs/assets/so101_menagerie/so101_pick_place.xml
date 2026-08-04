@@ -85,5 +85,16 @@
     <key name="home"
       qpos="0.08954 -1.74533 1.64009 0.45 0.0 -0.17453  0.18 0.0 0.0175 1 0 0 0"
       ctrl="0.08954 -1.74533 1.64009 0.45 0.0 -0.17453"/>
+
+    <!-- action_center (2026-08-02), kept in sync with so101_pick.xml (same
+         robot/limits, same saturation bug): decouples the residual action
+         decode's reference point from `home` (which physically resets the
+         arm and must not move) -- see so101_pick.xml for the full
+         measurements (mean dead action 29.3% -> 20.0%, reach unchanged at
+         100%). Read by name, not keyframe index, in envs/so101_pick_place.py
+         and deploy/bridge.py. -->
+    <key name="action_center"
+      qpos="0.08839 -0.82001 0.86169 0.84540 0.0 -0.17453  0.18 0.0 0.0175 1 0 0 0"
+      ctrl="0.08839 -0.82001 0.86169 0.84540 0.0 -0.17453"/>
   </keyframe>
 </mujoco>

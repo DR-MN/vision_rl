@@ -222,7 +222,7 @@ class Config:
     # Live GUI: tile training worlds in one MuJoCo window.
     gui: bool = False
     gui_realtime: bool = True          # throttle replay to real-time (watchable)
-    gui_envs: int = 16                 # max worlds to display (grid tiles)
+    gui_envs: int = 5               # max worlds to display (grid tiles)
 
     @property
     def batch_size(self) -> int:

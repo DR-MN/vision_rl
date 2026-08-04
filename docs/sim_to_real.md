@@ -22,8 +22,27 @@ the action decode maps 1:1 onto real position commands.
 
 1. **model action → real joints** — [bridge.py](../vision_rl/deploy/bridge.py)
    `SO101Bridge.action_to_targets` reproduces the env's decode byte-for-byte:
-   `arm = home + 0.9·a[:5]` (clipped per joint); gripper `[-1,1] → [closed,open]`.
-   The result is absolute joint targets in **radians** → send to the servos.
+   `arm = action_center + action_scale·a[:5]` (clipped per joint, then slew-
+   limited); gripper `[-1,1] → [closed,open]`. The result is absolute joint
+   targets in **radians** → send to the servos.
+
+   `action_center` (2026-08-02) is a **second keyframe**, separate from
+   `home`, in each scene XML (`so101_pick.xml` / `so101_pick_place.xml`).
+   `home` is what the arm physically resets/slews to (`home_targets()`,
+   hardware-verified, must not move without re-jogging on the real robot).
+   `action_center` is only the residual math's reference point -- it exists
+   because `home` sits at/near several joint limits (shoulder_lift exactly on
+   its lower bound, elbow_flex ~3deg from its upper bound), which saturated
+   ~29% of the policy's action distribution with zero gradient and showed up
+   as a real-hardware symptom: the arm approaching a cube and stalling short,
+   unable to move `elbow_flex` further. `action_center` keeps the same
+   gripper hover position but sits centered in each joint's range instead of
+   against a wall (dead action 29.3% → 20.0%, spawn-box reach unchanged at
+   100%). Both `bridge.py` and the training envs read it **by keyframe name**
+   (`action_center`), not index, from the same XML `home` already uses as its
+   single source of truth -- so they cannot silently drift apart the way two
+   hand-typed Python constants could. `scripts/verify_deploy.py` numerically
+   confirms the two decodes still agree after any change here.
 
 2. **real joints → proprio** — `SO101Bridge.observe` reads the 6 servo angles,
    finite-differences them for velocity, and computes the gripper-site xyz with

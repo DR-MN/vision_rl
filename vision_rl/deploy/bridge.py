@@ -94,6 +94,15 @@ class SO101Bridge:
         self._arm_home_ctrl = home_ctrl[:_N_ARM]
         self._home_ctrl = home_ctrl
 
+        # Action decode is centered on `action_center`, a SEPARATE keyframe
+        # from `home` (see the env's __init__ and the XML keyframe comment).
+        # `home` above is still what home_targets() returns -- the real,
+        # hardware-verified pose the arm physically slews to. Read by NAME so
+        # this can never silently drift from the training env's own lookup.
+        center_key = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_KEY, "action_center")
+        self._arm_action_center = np.asarray(m.key_ctrl[center_key][:_N_ARM],
+                                              dtype=np.float64)
+
         ctrlrange = np.asarray(m.actuator_ctrlrange, dtype=np.float64)
         self._arm_low = ctrlrange[:_N_ARM, 0]
         self._arm_high = ctrlrange[:_N_ARM, 1]
@@ -156,9 +165,10 @@ class SO101Bridge:
         """Decode a policy action into absolute joint position targets (rad).
 
         Byte-for-byte the transform in SO101PickPlaceEnv.step:
-          * arm:     residual around home, scaled by action_scale, clipped to
-                     range, THEN slew-limited relative to the previously
-                     commanded arm target (max_joint_delta rad/step)
+          * arm:     residual around action_center (NOT home -- see the
+                     `action_center` keyframe), scaled by action_scale,
+                     clipped to range, THEN slew-limited relative to the
+                     previously commanded arm target (max_joint_delta rad/step)
           * gripper: [-1,1] -> [closed, open] absolute command (not slew-limited,
                      same as the env)
         The result is what the sim fed to its position actuators, i.e. exactly
@@ -167,11 +177,11 @@ class SO101Bridge:
         Stateful: updates `self._prev_arm_ctrl` so the next call's slew clamp
         is relative to THIS step's output, same as the env carrying it in
         `data.ctrl` across steps. Call `reset(...)` at episode start to
-        re-seed this to home.
+        re-seed this to home (the physical start pose -- NOT action_center).
         """
         action = np.clip(np.asarray(action, dtype=np.float64), -1.0, 1.0)
 
-        arm = self._arm_home_ctrl + self.action_scale * action[:_N_ARM]
+        arm = self._arm_action_center + self.action_scale * action[:_N_ARM]
         arm = np.clip(arm, self._arm_low, self._arm_high)
         arm = np.clip(arm, self._prev_arm_ctrl - self.max_joint_delta,
                       self._prev_arm_ctrl + self.max_joint_delta)

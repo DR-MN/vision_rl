@@ -86,5 +86,32 @@
     <key name="home"
       qpos="0.08954 -1.74533 1.64009 0.45 0.0 -0.17453  0.18 0.0 0.0175 1 0 0 0"
       ctrl="0.08954 -1.74533 1.64009 0.45 0.0 -0.17453"/>
+
+    <!-- action_center (2026-08-02): the residual action decode's reference
+         point -- arm_ctrl = action_center + action_scale*action -- is now
+         DECOUPLED from `home` above. `home` is still what the arm physically
+         resets to (hardware-verified, must not move). But `home` sits AT/NEAR
+         several joint limits (shoulder_lift exactly at its lower bound,
+         elbow_flex 2.9deg from its upper bound), so at action_scale=1.8 a
+         large fraction of the policy's action distribution saturates against
+         those limits with zero gradient (measured: shoulder_lift 55% dead,
+         elbow_flex 53% dead, mean 29.3% across the 5 arm joints) -- this is
+         the "joint 3 (elbow) won't go up" / reach-limited symptom.
+         action_center keeps the SAME gripper hover position as `home` (within
+         5mm) and the SAME wrist_roll=0 (jaw-clearance fix) but is centered
+         well inside each joint's range instead of against a wall: mean dead
+         action drops 29.3% -> 20.0%, spawn-box reach stays 100%, and random-
+         policy time spent near the cube ("useful-zone") barely changes
+         (81.1% -> 77.8%) -- unlike the alternatives tried (absolute control,
+         a +-90deg cap, or an all-zero pose), which all collapsed useful-zone
+         to ~2.5% by moving the exploration prior far from the cube.
+         Read by name (`action_center`) in envs/so101_pick.py and
+         deploy/bridge.py -- NOT by keyframe index -- so both stay in sync
+         from this single source of truth, the same pattern `home` already
+         uses. Gripper channel here is unused (gripper is absolute-mapped,
+         not residual) -- copied from `home` for a valid keyframe. -->
+    <key name="action_center"
+      qpos="0.08839 -0.82001 0.86169 0.84540 0.0 -0.17453  0.18 0.0 0.0175 1 0 0 0"
+      ctrl="0.08839 -0.82001 0.86169 0.84540 0.0 -0.17453"/>
   </keyframe>
 </mujoco>

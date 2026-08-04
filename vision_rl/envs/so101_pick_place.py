@@ -88,6 +88,17 @@ class SO101PickPlaceEnv:
         self._home_ctrl = jnp.asarray(m.key_ctrl[0])
         self._arm_home_ctrl = self._home_ctrl[:_N_ARM]
 
+        # Residual action decode is centered on `action_center`, NOT `home`.
+        # `home` (above) is what the arm physically resets to and must stay a
+        # hardware-verified pose. `action_center` sits at the same gripper
+        # hover position but away from the joint limits `home` is pinned
+        # against -- see the `action_center` keyframe comment in
+        # so101_pick.xml for the measurements (shared robot/limits). Read by
+        # NAME (not keyframe index) so this and deploy/bridge.py can never
+        # silently drift out of sync.
+        center_key = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_KEY, "action_center")
+        self._arm_action_center = jnp.asarray(m.key_ctrl[center_key][:_N_ARM])
+
         ctrlrange = jnp.asarray(m.actuator_ctrlrange)
         self._arm_ctrl_low = ctrlrange[:_N_ARM, 0]
         self._arm_ctrl_high = ctrlrange[:_N_ARM, 1]
@@ -215,8 +226,9 @@ class SO101PickPlaceEnv:
     def step(self, state: SO101State, action: jax.Array) -> SO101State:
         action = jnp.clip(action, -1.0, 1.0)
 
-        # Arm: residual position control around home.
-        arm_ctrl = self._arm_home_ctrl + self.cfg.action_scale * action[:_N_ARM]
+        # Arm: residual position control around action_center (NOT home --
+        # see the __init__ comment and the XML's action_center keyframe).
+        arm_ctrl = self._arm_action_center + self.cfg.action_scale * action[:_N_ARM]
         arm_ctrl = jnp.clip(arm_ctrl, self._arm_ctrl_low, self._arm_ctrl_high)
         # Slew-rate limit: cap the per-step change in commanded joint target so
         # the arm can't snap to a new pose in one 20ms control step (mirrors the
