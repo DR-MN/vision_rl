@@ -53,6 +53,7 @@ class SO101PickState:
     done: jax.Array
     cube_init_z: jax.Array   # scalar resting height (for lift measurement)
     was_picked: jax.Array    # scalar 0/1, latched once a successful pick happens
+    was_open: jax.Array      # scalar 0/1, latched once the jaw opens over the cube
     grasped: jax.Array       # scalar 0/1, cube currently off the table
     prev_d_xy: jax.Array     # last-step HORIZONTAL gripper->cube offset (align shaping)
     prev_dz: jax.Array       # last-step gripper height above cube centre (descend shaping)
@@ -216,7 +217,8 @@ class SO101PickEnv:
             data=data, obs=obs,
             reward=jnp.float32(0.0), done=jnp.float32(0.0),
             cube_init_z=jnp.float32(self.cfg.cube_z),
-            was_picked=jnp.float32(0.0), grasped=jnp.float32(0.0),
+            was_picked=jnp.float32(0.0), was_open=jnp.float32(0.0),
+            grasped=jnp.float32(0.0),
             prev_d_xy=d_xy0, prev_dz=dz0,
             step_count=jnp.int32(0),
             rng=rng, metrics=metrics,
@@ -291,19 +293,29 @@ class SO101PickEnv:
         align_r = -self.cfg.align_scale * d_xy * approach_gate
         align_pr = (self.cfg.align_progress_scale
                     * (state.prev_d_xy - d_xy) * approach_gate)
-        # --- Stage 2: OPEN the jaw before coming down. Pays while aligned over
-        # the cube but still ABOVE it (dz > grasp_z_tol). Without this, every
-        # gripper term rewarded closing and none rewarded opening, so the policy
-        # learned to keep the jaw shut and merely bump the cube -- a closed jaw
-        # cannot enclose it, so grasp/lift/success never fired.
+        # --- Stage 2: OPEN the jaw before coming down. `opened_ready` marks
+        # the pose where opening matters: aligned over the cube, still ABOVE it
+        # (dz > grasp_z_tol), jaw commanded open. Paid ONCE per episode via the
+        # `was_open` latch (mirrors `was_picked`), NOT every step the pose
+        # holds -- a flat per-step version let the policy camp there forever
+        # (any dz > grasp_z_tol qualifies) and out-earn actually descending,
+        # since descend_pr's whole-episode total is tiny next to N steps of a
+        # standing bonus. One-shot removes that: it can only ever bootstrap
+        # "open before descending," never fund parking there. Without it at
+        # all, every gripper term rewards closing and none rewards opening, so
+        # the policy learns to keep the jaw shut and merely bump the cube -- a
+        # closed jaw cannot enclose it, so grasp/lift/success never fire.
         above_cube = (dz > self.cfg.grasp_z_tol).astype(jnp.float32)
-        descending = aligned * above_cube
-        open_r = (self.cfg.open_bonus_scale * descending * grip_open
+        opened_ready = aligned * above_cube * grip_open
+        was_open_next = jnp.maximum(state.was_open, opened_ready)
+        open_r = (self.cfg.open_bonus_scale * (was_open_next - state.was_open)
                   * approach_gate)
-        # --- Stage 3: descend onto it. Gated on `aligned` (so lowering only
-        # pays once above the cube -- go up-and-over, not a sideways swipe) AND
-        # on `grip_open`, which makes opening a hard PREREQUISITE for earning
-        # any descent reward, enforcing align -> open -> descend order.
+        # --- Stage 3: descend onto it. This is the CONTINUOUS downward pull --
+        # it fires every step dz actually shrinks, unlike the one-shot open_r
+        # above. Gated on `aligned` (so lowering only pays once above the cube
+        # -- go up-and-over, not a sideways swipe) AND on `grip_open`, which
+        # makes opening a hard PREREQUISITE for earning any descent reward,
+        # enforcing align -> open -> descend order.
         descend_pr = (self.cfg.descend_progress_scale
                       * (state.prev_dz - dz) * aligned * grip_open
                       * approach_gate)
@@ -336,7 +348,7 @@ class SO101PickEnv:
                    "grip_open": grip_open}
         return state.replace(
             data=data, obs=obs, reward=reward, done=done,
-            was_picked=ever_picked, grasped=lifted_now,
+            was_picked=ever_picked, was_open=was_open_next, grasped=lifted_now,
             prev_d_xy=d_xy, prev_dz=dz,
             step_count=step_count, metrics=metrics,
         )

@@ -60,6 +60,10 @@ def make_train(cfg: Config) -> Callable[[], dict]:
     env = VisionVecEnv(cfg)
     network = _build_network(cfg, env.action_size)
     ppo = cfg.ppo
+    # so101_pick's staged reward is easy to get silently stuck in one stage
+    # (see the open_r fix) -- surface per-stage rates so a stall shows up in
+    # the logs instead of only as `mean_reward` plateauing with no context.
+    is_pick = cfg.task == "so101_pick"
 
     num_updates = ppo.total_env_steps // cfg.batch_size
     n_gui = min(ppo.num_envs, cfg.gui_envs)   # worlds mirrored in the tiled viewer
@@ -96,6 +100,9 @@ def make_train(cfg: Config) -> Callable[[], dict]:
                 "qpos": next_vstate.env_state.data.qpos[:n_gui],
                 "mocap": next_vstate.env_state.data.mocap_pos[:n_gui],
             }
+            if is_pick:
+                transition["aligned"] = next_vstate.env_state.metrics["aligned"]
+                transition["grip_open"] = next_vstate.env_state.metrics["grip_open"]
             return (next_vstate, rng), transition
 
         (vstate, rng), traj = jax.lax.scan(
@@ -141,6 +148,9 @@ def make_train(cfg: Config) -> Callable[[], dict]:
             "success_rate": traj["success"].mean(),
             "table_hit_rate": traj["table_hit"].mean(),
         }
+        if is_pick:
+            metrics["align_rate"] = traj["aligned"].mean()
+            metrics["grip_open_rate"] = traj["grip_open"].mean()
         # Rollout trajectory of the first n_gui worlds, for the tiled GUI (kept
         # on device until the driver pulls it; negligible cost when GUI is off).
         viz = {"qpos": traj["qpos"], "mocap": traj["mocap"]}
@@ -221,12 +231,18 @@ def make_train(cfg: Config) -> Callable[[], dict]:
                 steps = it * cfg.batch_size                  # cumulative across resumes
                 session_steps = (it - start_it) * cfg.batch_size
                 sps = session_steps / (time.time() - start)  # this session's throughput
+                stage_str = (
+                    f"align={metrics['align_rate']:.2f} "
+                    f"open={metrics['grip_open_rate']:.2f} "
+                    if is_pick else ""
+                )
                 print(
                     f"[{it:>5}/{num_updates}] steps={steps:>10,} "
                     f"R={metrics['mean_reward']:+.3f} "
                     f"dist={metrics['mean_dist']:.3f} "
                     f"succ={metrics['success_rate']:.2f} "
                     f"tbl={metrics['table_hit_rate']:.2f} "
+                    f"{stage_str}"
                     f"kl={metrics['approx_kl']:.4f} "
                     f"ent={metrics['entropy']:+.2f} "
                     f"| {sps:,.0f} sps"

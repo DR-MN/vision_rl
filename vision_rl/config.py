@@ -101,15 +101,21 @@ class SO101PickConfig:
     descend_progress_scale: float = 3.0
 
     # Reward shaping (staged: align -> OPEN -> descend -> grasp -> lift).
-    # Rewards holding the jaw OPEN while aligned over the cube but still above
-    # it. Without this every gripper term rewarded CLOSING (grasp_bonus, the
-    # `held` precondition on success) and nothing rewarded opening, so a trained
-    # policy kept the jaw shut permanently, approached correctly, and just
-    # bumped the cube -- a closed jaw cannot enclose the 4.5cm cube, so grasp/
-    # lift/success could never fire and there was no gradient out of it.
-    # Matched to grasp_bonus_scale so neither open nor close dominates; they are
-    # active in different height bands (open while dz > grasp_z_tol, close while
-    # |dz| < grasp_z_tol) so they hand off naturally during the descent.
+    # ONE-TIME bonus (latched via `was_open`, see so101_pick.py step()) for
+    # first opening the jaw while aligned over the cube but still above it.
+    # Without ANY open incentive, every gripper term rewards CLOSING
+    # (grasp_bonus, the `held` precondition on success) and nothing rewards
+    # opening, so a trained policy keeps the jaw shut permanently, approaches
+    # correctly, and just bumps the cube -- a closed jaw cannot enclose the
+    # 4.5cm cube, so grasp/lift/success never fire and there is no gradient
+    # out of it. This USED to pay open_bonus_scale every step the pose held
+    # (2026-08-05: found via a 50M-step run that plateaued at R~0.47 for 30M+
+    # steps with success=0.00) -- that flat per-step version let the policy
+    # camp aligned-and-open indefinitely (any dz > grasp_z_tol qualifies) and
+    # out-earn actually finishing the pick, since descend_pr's whole-episode
+    # total is a few tenths, dwarfed by N steps of a standing 0.5 bonus. Now
+    # it only ever fires once per episode, so it can bootstrap "open before
+    # descending" but never fund parking there.
     open_bonus_scale: float = 0.5
     grasp_bonus_scale: float = 0.5
     lift_scale: float = 4.0
