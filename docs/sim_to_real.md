@@ -26,23 +26,36 @@ the action decode maps 1:1 onto real position commands.
    limited); gripper `[-1,1] → [closed,open]`. The result is absolute joint
    targets in **radians** → send to the servos.
 
-   `action_center` (2026-08-02) is a **second keyframe**, separate from
-   `home`, in each scene XML (`so101_pick.xml` / `so101_pick_place.xml`).
-   `home` is what the arm physically resets/slews to (`home_targets()`,
-   hardware-verified, must not move without re-jogging on the real robot).
-   `action_center` is only the residual math's reference point -- it exists
-   because `home` sits at/near several joint limits (shoulder_lift exactly on
-   its lower bound, elbow_flex ~3deg from its upper bound), which saturated
-   ~29% of the policy's action distribution with zero gradient and showed up
-   as a real-hardware symptom: the arm approaching a cube and stalling short,
-   unable to move `elbow_flex` further. `action_center` keeps the same
-   gripper hover position but sits centered in each joint's range instead of
-   against a wall (dead action 29.3% → 20.0%, spawn-box reach unchanged at
-   100%). Both `bridge.py` and the training envs read it **by keyframe name**
-   (`action_center`), not index, from the same XML `home` already uses as its
-   single source of truth -- so they cannot silently drift apart the way two
-   hand-typed Python constants could. `scripts/verify_deploy.py` numerically
-   confirms the two decodes still agree after any change here.
+   `home` (2026-08-04) is now an **all-zero arm pose** ("L shape" -- arm
+   standing straight up out of the base), replacing the earlier
+   hardware-jogged low-hover pose. `action_center` is a **second keyframe**,
+   separate from `home`, in each scene XML (`so101_pick.xml` /
+   `so101_pick_place.xml`), and is currently set **equal** to the new `home`.
+   The two were decoupled on 2026-08-02 because the *old* home sat at/near
+   several joint limits (shoulder_lift exactly on its lower bound, elbow_flex
+   ~3deg from its upper bound), which saturated ~29% of the policy's action
+   distribution with zero gradient -- the real-hardware symptom was the arm
+   approaching a cube and stalling short, unable to move `elbow_flex` further.
+   The new all-zero `home` sits at **exactly the midpoint of every joint's
+   range** (all 5 arm joints have ~symmetric limits about 0), so that
+   saturation problem no longer exists structurally: measured dead action is
+   ~9.0% at `action_scale=1.8` (so101_pick) and ~0.1% at `action_scale=0.9`
+   (so101_pick_place), down from 20.0%/29.3% with the old poses. The
+   `action_center` keyframe is kept (rather than removed) purely so the
+   decoupling machinery stays available if `home` is ever hardware-jogged to
+   a near-limit pose again. Both `bridge.py` and the training envs read it
+   **by keyframe name** (`action_center`), not index, from the same XML
+   `home` already uses as its single source of truth -- so they cannot
+   silently drift apart the way two hand-typed Python constants could.
+   `scripts/verify_deploy.py` numerically confirms the two decodes still
+   agree after any change here.
+
+   **`home` is a physical reset pose and has NOT yet been re-verified on the
+   real arm** -- run `scripts/check_calibration.py` before trusting it there,
+   same as every previous home change in this project. In sim, the new home's
+   grasp site sits at `(0.391, 0.012, 0.235)` -- ~23.5cm above the table and
+   only ~0.9cm from the tabletop's physical edge in x -- so confirm the real
+   robot has clearance in that raised, extended pose before running it.
 
 2. **real joints → proprio** — `SO101Bridge.observe` reads the 6 servo angles,
    finite-differences them for velocity, and computes the gripper-site xyz with

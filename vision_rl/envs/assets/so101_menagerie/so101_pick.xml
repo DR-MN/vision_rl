@@ -54,64 +54,50 @@
   </worldbody>
 
   <keyframe>
-    <!-- home: 5 arm joints + gripper(closed) then cube freejoint (xyz + quat).
-         Recalibrated against the real arm (scripts/check_calibration.py) after
-         fixing the wrist_roll sim/real offset via that joint's `ref` in
-         so101.xml -- the previous home commanded a pose that hit the table on
-         hardware. That pose was jogged and verified safe on the real robot.
-
-         wrist_flex RAISED 0.95068 -> 0.45 (2026-07-23): the verified pose put
-         the grasp site at z=0.0169 -- i.e. AT cube height and INSIDE the cube
-         spawn box (home gripper xy = 0.183,-0.013) -- so ~16% of resets spawned
-         the cube interpenetrating the closed jaw by up to 12.7mm, which
-         detonated on the first step (qvel spikes, occasional NaN). It was also
-         below table_clear=0.02, firing the table penalty at every reset.
-         Raising the wrist lifts the grasp site to z=0.0789 (~8cm, the hover
-         height the top-down reward targets) and drops cube-in-gripper to 0%.
-         Verified to cost nothing in reach: top-down coverage of the spawn box
-         is unchanged (96.7% @25deg, 100% @35deg at action_scale=1.8).
-         NOTE: this pose differs from the hardware-jogged one -- re-verify on
-         the real arm before deploying. It moves the wrist AWAY from the table,
-         so it is the safe direction.
-
-         wrist_roll 1.58598 -> 0.0 (2026-08-01): at grasp height (gripper open,
-         reaching over the cube) the moving jaw physically hit the tabletop for
-         wrist_roll in roughly [52,140] deg -- the jaw's open sweep dips into
-         the table because that roll orientation opens it front-to-back rather
-         than side-to-side. Verified by contact sweep: wrist_roll in
-         [-157,35] deg (and near +157) is clear across the ENTIRE gripper-open
-         range at this reach. 0.0 sits centered in that clear band. Costs
-         nothing mechanically -- the cube is square in xy, so grasp quality is
-         unaffected by which horizontal angle the jaws close from. -->
+    <!-- home (2026-08-04): ALL-ZERO arm pose ("L shape" -- arm standing
+         straight up out of the base, matching the pose photographed and
+         separately trained by the user, who reported good pick performance).
+         Replaces the hardware-jogged low-hover pose (see git history --
+         `git show <old-commit>:vision_rl/envs/assets/so101_menagerie/so101_pick.xml`
+         to recover it, e.g. commit "pick rewards changed,home-wrist roll
+         modified"). Verified in sim (scripts/ check, not yet on real hardware):
+           - grasp site at (0.391, 0.012, 0.235) -- ~23.5cm above the table,
+             directly above the base's far reach limit (tabletop edge is at
+             x=0.40, so only ~0.9cm clearance in x at this exact pose -- the
+             episode moves the arm off this spot immediately, but this is the
+             PHYSICAL RESET pose, so it must be re-verified on the real arm
+             with scripts/check_calibration.py before trusting it there,
+             exactly like every previous home change in this project).
+           - zero self-contacts at this pose (checked via mj_step, cube parked
+             away).
+           - all 5 joints sit at EXACTLY 50% of their range (qpos=0 is the
+             midpoint for shoulder_pan/shoulder_lift/elbow_flex/wrist_flex/
+             wrist_roll, since all 5 ranges are ~symmetric about 0) -- this
+             also happens to reproduce wrist_roll's validated safe orientation
+             (see the action_center note below and the 2026-08-01 wrist_roll
+             fix in so101.xml's `ref`), since that fix specifically chose 0.0
+             as the safe value.
+         Gripper channel kept CLOSED (-0.17453), matching the previous home's
+         resting convention. -->
     <key name="home"
-      qpos="0.08954 -1.74533 1.64009 0.45 0.0 -0.17453  0.18 0.0 0.0175 1 0 0 0"
-      ctrl="0.08954 -1.74533 1.64009 0.45 0.0 -0.17453"/>
+      qpos="0.0 0.0 0.0 0.0 0.0 -0.17453  0.18 0.0 0.0175 1 0 0 0"
+      ctrl="0.0 0.0 0.0 0.0 0.0 -0.17453"/>
 
-    <!-- action_center (2026-08-02): the residual action decode's reference
-         point -- arm_ctrl = action_center + action_scale*action -- is now
-         DECOUPLED from `home` above. `home` is still what the arm physically
-         resets to (hardware-verified, must not move). But `home` sits AT/NEAR
-         several joint limits (shoulder_lift exactly at its lower bound,
-         elbow_flex 2.9deg from its upper bound), so at action_scale=1.8 a
-         large fraction of the policy's action distribution saturates against
-         those limits with zero gradient (measured: shoulder_lift 55% dead,
-         elbow_flex 53% dead, mean 29.3% across the 5 arm joints) -- this is
-         the "joint 3 (elbow) won't go up" / reach-limited symptom.
-         action_center keeps the SAME gripper hover position as `home` (within
-         5mm) and the SAME wrist_roll=0 (jaw-clearance fix) but is centered
-         well inside each joint's range instead of against a wall: mean dead
-         action drops 29.3% -> 20.0%, spawn-box reach stays 100%, and random-
-         policy time spent near the cube ("useful-zone") barely changes
-         (81.1% -> 77.8%) -- unlike the alternatives tried (absolute control,
-         a +-90deg cap, or an all-zero pose), which all collapsed useful-zone
-         to ~2.5% by moving the exploration prior far from the cube.
-         Read by name (`action_center`) in envs/so101_pick.py and
-         deploy/bridge.py -- NOT by keyframe index -- so both stay in sync
-         from this single source of truth, the same pattern `home` already
-         uses. Gripper channel here is unused (gripper is absolute-mapped,
-         not residual) -- copied from `home` for a valid keyframe. -->
+    <!-- action_center (2026-08-04): set EQUAL to the new all-zero `home`.
+         The original reason for decoupling this from `home` (2026-08-02) was
+         that the old hardware-jogged home sat AT/NEAR several joint limits,
+         saturating ~29% of the policy's action distribution. Since the new
+         all-zero home sits at the exact CENTER of every joint's range, that
+         problem no longer exists structurally -- measured dead-action at
+         action_scale=1.8 (so101_pick) is now ~9.0% (vs 20.0% with the old
+         decoupled center, 29.3% with the old pinned home), and ~0.1% at
+         action_scale=0.9 (so101_pick_place). The keyframe is kept separate
+         (rather than removing it and reverting envs/*.py to read `home`
+         directly) purely so the decoupling machinery -- read by NAME, kept in
+         sync with deploy/bridge.py -- stays available if `home` is ever
+         hardware-jogged to a near-limit pose again. -->
     <key name="action_center"
-      qpos="0.08839 -0.82001 0.86169 0.84540 0.0 -0.17453  0.18 0.0 0.0175 1 0 0 0"
-      ctrl="0.08839 -0.82001 0.86169 0.84540 0.0 -0.17453"/>
+      qpos="0.0 0.0 0.0 0.0 0.0 -0.17453  0.18 0.0 0.0175 1 0 0 0"
+      ctrl="0.0 0.0 0.0 0.0 0.0 -0.17453"/>
   </keyframe>
 </mujoco>

@@ -61,40 +61,25 @@
   </worldbody>
 
   <keyframe>
-    <!-- home: 5 arm joints + gripper(closed) then cube freejoint (xyz + quat).
-         Recalibrated against the real arm (scripts/check_calibration.py) after
-         fixing the wrist_roll sim/real offset via that joint's `ref` in
-         so101.xml -- the previous home commanded a pose that hit the table on
-         hardware. That pose was jogged and verified safe on the real robot.
-
-         wrist_flex RAISED 0.95068 -> 0.45 (2026-07-23), kept in sync with
-         so101_pick.xml (same real robot, same bug): the verified pose put the
-         grasp site at z=0.0169 -- AT cube height and INSIDE the cube spawn box
-         -- so resets could spawn the cube interpenetrating the closed jaw,
-         which detonated on the first step. It was also below table_clear=0.02,
-         firing the table penalty at every reset. See so101_pick.xml for the
-         full measurements. Re-verify on the real arm before deploying; the
-         change moves the wrist AWAY from the table (the safe direction).
-
-         wrist_roll 1.58598 -> 0.0 (2026-08-01), kept in sync with
-         so101_pick.xml (same robot/jaw geometry, same grasp-phase bug): the
-         moving jaw hit the tabletop when open at grasp height for wrist_roll
-         in roughly [52,140] deg (front-to-back opening); [-157,35] deg is
-         clear across the whole gripper-open range. See so101_pick.xml for the
-         contact-sweep measurements. -->
+    <!-- home (2026-08-04): ALL-ZERO arm pose ("L shape"), kept in sync with
+         so101_pick.xml (same robot/limits) -- see that file for the full
+         measurements (grasp site ~23.5cm above the table, zero self-contacts,
+         all 5 joints exactly centered in their range). Replaces the
+         hardware-jogged low-hover pose; recover it from git history if
+         needed. NOT YET RE-VERIFIED on the real arm -- run
+         scripts/check_calibration.py before trusting this on hardware, same
+         as every previous home change in this project. -->
     <key name="home"
-      qpos="0.08954 -1.74533 1.64009 0.45 0.0 -0.17453  0.18 0.0 0.0175 1 0 0 0"
-      ctrl="0.08954 -1.74533 1.64009 0.45 0.0 -0.17453"/>
+      qpos="0.0 0.0 0.0 0.0 0.0 -0.17453  0.18 0.0 0.0175 1 0 0 0"
+      ctrl="0.0 0.0 0.0 0.0 0.0 -0.17453"/>
 
-    <!-- action_center (2026-08-02), kept in sync with so101_pick.xml (same
-         robot/limits, same saturation bug): decouples the residual action
-         decode's reference point from `home` (which physically resets the
-         arm and must not move) -- see so101_pick.xml for the full
-         measurements (mean dead action 29.3% -> 20.0%, reach unchanged at
-         100%). Read by name, not keyframe index, in envs/so101_pick_place.py
-         and deploy/bridge.py. -->
+    <!-- action_center (2026-08-04): set EQUAL to the new all-zero `home`, kept
+         in sync with so101_pick.xml -- see that file for why (all-zero is
+         already centered in every joint's range, so the decoupling that used
+         to be needed against the old pinned home is no longer doing anything
+         here, but the keyframe is kept for future flexibility). -->
     <key name="action_center"
-      qpos="0.08839 -0.82001 0.86169 0.84540 0.0 -0.17453  0.18 0.0 0.0175 1 0 0 0"
-      ctrl="0.08839 -0.82001 0.86169 0.84540 0.0 -0.17453"/>
+      qpos="0.0 0.0 0.0 0.0 0.0 -0.17453  0.18 0.0 0.0175 1 0 0 0"
+      ctrl="0.0 0.0 0.0 0.0 0.0 -0.17453"/>
   </keyframe>
 </mujoco>

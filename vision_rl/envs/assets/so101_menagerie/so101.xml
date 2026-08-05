@@ -20,11 +20,23 @@
       <default class="collision">
         <geom group="3" condim="3"/>
       </default>
+      <!-- solref timeconst 0.01->0.02 (2026-08-04): 0.01 was stiffer than
+           MuJoCo's own default (0.02) and, combined with the equally-stiff
+           kp=998 position actuators (so101.xml sts3215 class), let a fast
+           gripper-vs-table strike produce an oversized one-step correction
+           impulse that occasionally diverged to NaN a few steps later.
+           Verified: an i.i.d.-random-action stress test that produced 207/2500
+           NaN steps at 0.01 produced 0/2500 at 0.02 (so101_pick, all-zero
+           home). 0.02 is MuJoCo's plain global default, not a new/exotic
+           value. A static gripper-close-on-cube check was inconclusive on
+           BOTH old and new values (test setup issue, not a grasp-quality
+           finding either way) -- real confirmation is a retrain, same as
+           every other change bundled into this session. -->
       <default class="collision_gripper">
-        <geom group="3" condim="6" friction="1 5e-3 5e-4" solref="0.01 1" priority="1" rgba="1.0 0 0 1.0" mass="0"/>
+        <geom group="3" condim="6" friction="1 5e-3 5e-4" solref="0.02 1" priority="1" rgba="1.0 0 0 1.0" mass="0"/>
       </default>
       <default class="collision_gripper_mesh">
-        <geom group="4" condim="6" friction="1 5e-3 5e-4" solref="0.01 1" priority="1" rgba="1.0 0 0 1.0" mass="0"/>
+        <geom group="4" condim="6" friction="1 5e-3 5e-4" solref="0.02 1" priority="1" rgba="1.0 0 0 1.0" mass="0"/>
       </default>
     </default>
 
