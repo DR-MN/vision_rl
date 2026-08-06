@@ -63,6 +63,91 @@ class SO101PickState:
     metrics: dict[str, Any]
 
 
+def compute_pick_reward(
+    cfg: SO101PickConfig,
+    d_xy: jax.Array, dz: jax.Array, cube_z: jax.Array, cube_init_z: jax.Array,
+    grip_open: jax.Array, grip_closing: jax.Array,
+    prev_d_xy: jax.Array, min_dz: jax.Array,
+    was_open: jax.Array, was_picked: jax.Array,
+    table_hit: jax.Array, ctrl_cost: jax.Array,
+) -> dict[str, jax.Array]:
+    """Pure staged reward for so101_pick -- no physics, so it can be unit
+    tested with hand-picked numbers (see tests/test_pick_reward.py) instead
+    of needing a full MJX rollout to hit exact d_xy/dz values. `step()` is the
+    only caller in production; it feeds this the physics-derived numbers and
+    applies the returned latches/reward to the next state.
+    """
+    cube_lift = cube_z - cube_init_z
+    # Whether the cube is CURRENTLY off the table (physically held/lifted).
+    lifted_now = (cube_z > cfg.lift_thresh).astype(jnp.float32)
+
+    # Gripper is horizontally over the cube centre -- the precondition for
+    # descending onto it.
+    aligned = (d_xy < cfg.align_tol).astype(jnp.float32)
+    # A grasp requires a genuine TOP-DOWN pose: over the cube AND at cube
+    # height (a sideways approach that happens to be within range doesn't
+    # count).
+    at_height = (jnp.abs(dz) < cfg.grasp_z_tol).astype(jnp.float32)
+    near_cube = aligned * at_height
+    # "Held" proxy: fingers on the cube top-down AND jaw commanded closed.
+    # Keeps the grasp bonus alive through the lift so the staging has no
+    # reward cliff.
+    held = near_cube * grip_closing
+
+    # Pick succeeds once the cube is genuinely held AND raised above
+    # pick_height (10cm above the table by default).
+    success = held * (cube_z > cfg.pick_height).astype(jnp.float32)
+    ever_picked = jnp.maximum(was_picked, success)
+
+    # Approach shaping is active whenever the cube is neither currently held
+    # nor already successfully picked, so a dropped/slipped cube pulls the
+    # arm back to pick it up again.
+    approach_gate = 1.0 - jnp.maximum(lifted_now, success)
+
+    # --- Stage 1: get the gripper horizontally OVER the cube ---
+    align_r = -cfg.align_scale * d_xy * approach_gate
+    align_pr = cfg.align_progress_scale * (prev_d_xy - d_xy) * approach_gate
+
+    # --- Stage 2: OPEN the jaw before coming down. Paid ONCE per episode via
+    # the `was_open` latch (mirrors `was_picked`), not every step the pose
+    # holds -- see so101_pick.py step() history for why a flat per-step
+    # version is exploitable (BUG C, 2026-08-05).
+    above_cube = (dz > cfg.grasp_z_tol).astype(jnp.float32)
+    opened_ready = aligned * above_cube * grip_open
+    was_open_next = jnp.maximum(was_open, opened_ready)
+    open_r = cfg.open_bonus_scale * (was_open_next - was_open) * approach_gate
+
+    # --- Stage 3: descend onto it. Rewards a NEW low (via the `min_dz`
+    # ratchet), not a plain per-step delta -- see so101_pick.py step() history
+    # for why the delta form is exploitable (BUG D, 2026-08-06: the agent-
+    # controlled `grip_open` gate let a policy farm reward by swinging up and
+    # down instead of committing to a real descent).
+    new_min_dz = jnp.where(approach_gate > 0.5, jnp.minimum(min_dz, dz), dz)
+    descend_pr = (cfg.descend_progress_scale
+                  * jnp.clip(min_dz - new_min_dz, 0.0, None)
+                  * aligned * grip_open * approach_gate)
+
+    # Grasp bonus stays on while the cube is held, even above the lift line.
+    grasp_r = cfg.grasp_bonus_scale * held
+    # The physical lift signal: the cube only rises if it is really gripped.
+    # Caps at pick_height -- the reward saturates once the goal height is hit.
+    lift_r = cfg.lift_scale * jnp.clip(cube_lift, 0.0, cfg.pick_height)
+    succ_r = cfg.success_bonus * success
+    table_pen = cfg.table_penalty_scale * table_hit
+    reward = (align_r + align_pr + open_r + descend_pr + grasp_r + lift_r
+              + succ_r - ctrl_cost - table_pen)
+
+    return {
+        "reward": reward,
+        "align_r": align_r, "align_pr": align_pr, "open_r": open_r,
+        "descend_pr": descend_pr, "grasp_r": grasp_r, "lift_r": lift_r,
+        "succ_r": succ_r, "table_pen": table_pen,
+        "aligned": aligned, "held": held, "success": success,
+        "lifted_now": lifted_now, "ever_picked": ever_picked,
+        "was_open_next": was_open_next, "new_min_dz": new_min_dz,
+    }
+
+
 class SO101PickEnv:
     def __init__(self, cfg: SO101PickConfig | None = None, impl: str = "jax",
                  num_envs: int = 1, naconmax: int | None = None,
@@ -257,121 +342,40 @@ class SO101PickEnv:
         d_xy = jnp.linalg.norm(grasp[:2] - cube[:2])
         dz = grasp[2] - cube[2]
 
-        cube_lift = cube[2] - state.cube_init_z
-        # Whether the cube is CURRENTLY off the table (physically held/lifted).
-        lifted_now = (cube[2] > self.cfg.lift_thresh).astype(jnp.float32)
-
-        # Gripper is horizontally over the cube centre -- the precondition for
-        # descending onto it.
-        aligned = (d_xy < self.cfg.align_tol).astype(jnp.float32)
-
         # Gripper-closing command (action[5] < 0 -> closing); shaping so the jaw
         # tends to close when the fingers are actually at the cube.
         grip_closing = (0.5 * (action[_N_ARM] + 1.0) < 0.5).astype(jnp.float32)
         grip_open = 1.0 - grip_closing
-        # A grasp now requires a genuine TOP-DOWN pose: over the cube AND at
-        # cube height. A sideways approach that happens to be within 4.5cm no
-        # longer counts (that was the old 3-D `d_reach < grasp_dist` test).
-        at_height = (jnp.abs(dz) < self.cfg.grasp_z_tol).astype(jnp.float32)
-        near_cube = aligned * at_height
-        # "Held" proxy: fingers on the cube top-down AND jaw commanded closed.
-        # Keeps the grasp bonus alive through the lift so the staging has no
-        # reward cliff.
-        held = near_cube * grip_closing
-
-        # Pick succeeds once the cube is genuinely held AND raised above
-        # pick_height (10cm above the table by default).
-        picked = held * (cube[2] > self.cfg.pick_height).astype(jnp.float32)
-        success = picked
-        ever_picked = jnp.maximum(state.was_picked, success)
-
-        # Approach shaping is active whenever the cube is neither currently held
-        # nor already successfully picked, so a dropped/slipped cube pulls the
-        # arm back to pick it up again.
-        approach_gate = 1.0 - jnp.maximum(lifted_now, success)
-
-        # --- Stage 1: get the gripper horizontally OVER the cube ---
-        align_r = -self.cfg.align_scale * d_xy * approach_gate
-        align_pr = (self.cfg.align_progress_scale
-                    * (state.prev_d_xy - d_xy) * approach_gate)
-        # --- Stage 2: OPEN the jaw before coming down. `opened_ready` marks
-        # the pose where opening matters: aligned over the cube, still ABOVE it
-        # (dz > grasp_z_tol), jaw commanded open. Paid ONCE per episode via the
-        # `was_open` latch (mirrors `was_picked`), NOT every step the pose
-        # holds -- a flat per-step version let the policy camp there forever
-        # (any dz > grasp_z_tol qualifies) and out-earn actually descending,
-        # since descend_pr's whole-episode total is tiny next to N steps of a
-        # standing bonus. One-shot removes that: it can only ever bootstrap
-        # "open before descending," never fund parking there. Without it at
-        # all, every gripper term rewards closing and none rewards opening, so
-        # the policy learns to keep the jaw shut and merely bump the cube -- a
-        # closed jaw cannot enclose it, so grasp/lift/success never fire.
-        above_cube = (dz > self.cfg.grasp_z_tol).astype(jnp.float32)
-        opened_ready = aligned * above_cube * grip_open
-        was_open_next = jnp.maximum(state.was_open, opened_ready)
-        open_r = (self.cfg.open_bonus_scale * (was_open_next - state.was_open)
-                  * approach_gate)
-        # --- Stage 3: descend onto it. This is the CONTINUOUS downward pull.
-        # Gated on `aligned` (so lowering only pays once above the cube -- go
-        # up-and-over, not a sideways swipe) AND on `grip_open`, which makes
-        # opening a hard PREREQUISITE for earning any descent reward,
-        # enforcing align -> open -> descend order.
-        #
-        # Rewards a NEW low, not a plain per-step delta (BUG fixed 2026-08-06):
-        # `descend_progress_scale * (prev_dz - dz)` is only reward-neutral
-        # over a full down-up loop if the SAME gate applies both directions.
-        # Here the gate (`grip_open`) is under the agent's own control, so a
-        # policy that opens the jaw only while descending and closes it while
-        # climbing back up collects the "down" reward every cycle and pays
-        # NONE of the matching "up" cost (closed => the term is 0, not
-        # negative) -- a repeatable, no-risk profit loop. Confirmed in a
-        # trained checkpoint's rollout: dz sawtoothed 0.07-0.33m with
-        # `grip_open` flipping in lockstep with direction every ~12 steps,
-        # `cube_z` never moving -- literal up-down "swinging," never a real
-        # grasp attempt. Tracking the best (lowest) dz reached so far THIS
-        # approach and only paying for a new record closes the loop:
-        # revisiting a depth you've already been credited for -- open or
-        # closed, any path -- earns nothing, so the only way to keep earning
-        # is to keep actually going lower. `min_dz` free-tracks (no gating)
-        # while NOT approaching (`approach_gate=0`, i.e. already held/
-        # succeeded) so a later drop-and-retry starts its ratchet fresh from
-        # wherever the cube ended up, instead of being stuck against a stale
-        # record from the earlier attempt.
-        new_min_dz = jnp.where(approach_gate > 0.5,
-                                jnp.minimum(state.min_dz, dz), dz)
-        descend_pr = (self.cfg.descend_progress_scale
-                      * jnp.clip(state.min_dz - new_min_dz, 0.0, None)
-                      * aligned * grip_open * approach_gate)
-        # Grasp bonus stays on while the cube is held, even above the lift line.
-        # Active in the complementary height band to `open_r` (|dz| <
-        # grasp_z_tol vs dz > grasp_z_tol), so the two hand off during descent.
-        grasp_r = self.cfg.grasp_bonus_scale * held
-        # The physical lift signal: the cube only rises if it is really gripped.
-        # Caps at pick_height -- the reward saturates once the goal height is hit.
-        lift_r = self.cfg.lift_scale * jnp.clip(cube_lift, 0.0, self.cfg.pick_height)
-        succ_r = self.cfg.success_bonus * success
         ctrl_cost = self.cfg.ctrl_cost_scale * jnp.sum(jnp.square(action))
         # Penalize being inside the table clearance zone while NOT over the cube
         # (covers both diving into the table and side-approaching at cube height).
         table_hit = self._table_dive(data, d_xy)
-        table_pen = self.cfg.table_penalty_scale * table_hit
-        reward = (align_r + align_pr + open_r + descend_pr + grasp_r + lift_r
-                  + succ_r - ctrl_cost - table_pen)
+
+        # All the staged reward math lives in compute_pick_reward() (pure,
+        # physics-free) so it can be unit tested with hand-picked numbers --
+        # see tests/test_pick_reward.py.
+        r = compute_pick_reward(
+            self.cfg, d_xy, dz, cube[2], state.cube_init_z,
+            grip_open, grip_closing,
+            state.prev_d_xy, state.min_dz, state.was_open, state.was_picked,
+            table_hit, ctrl_cost,
+        )
 
         step_count = state.step_count + 1
         done = (step_count >= self.cfg.episode_length).astype(jnp.float32)
 
         obs = self._proprio(data)
-        metrics = {"dist": d_reach, "success": success, "cube_z": cube[2],
-                   "lifted": lifted_now, "table_hit": table_hit,
-                   "d_xy": d_xy, "aligned": aligned,
+        metrics = {"dist": d_reach, "success": r["success"], "cube_z": cube[2],
+                   "lifted": r["lifted_now"], "table_hit": table_hit,
+                   "d_xy": d_xy, "aligned": r["aligned"],
                    # Fraction of steps the jaw is commanded open -- watch this
                    # to confirm the policy stops holding the jaw permanently
                    # shut (it sat near 0 before open_r was added).
                    "grip_open": grip_open}
         return state.replace(
-            data=data, obs=obs, reward=reward, done=done,
-            was_picked=ever_picked, was_open=was_open_next, grasped=lifted_now,
-            prev_d_xy=d_xy, min_dz=new_min_dz,
+            data=data, obs=obs, reward=r["reward"], done=done,
+            was_picked=r["ever_picked"], was_open=r["was_open_next"],
+            grasped=r["lifted_now"],
+            prev_d_xy=d_xy, min_dz=r["new_min_dz"],
             step_count=step_count, metrics=metrics,
         )
