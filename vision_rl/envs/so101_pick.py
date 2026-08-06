@@ -117,11 +117,26 @@ def compute_pick_reward(
     was_open_next = jnp.maximum(was_open, opened_ready)
     open_r = cfg.open_bonus_scale * (was_open_next - was_open) * approach_gate
 
-    # --- Stage 3: descend onto it. Rewards a NEW low (via the `min_dz`
-    # ratchet), not a plain per-step delta -- see so101_pick.py step() history
-    # for why the delta form is exploitable (BUG D, 2026-08-06: the agent-
-    # controlled `grip_open` gate let a policy farm reward by swinging up and
-    # down instead of committing to a real descent).
+    # --- Stage 3: descend onto it. Two parts, mirroring Stage 1's align_r +
+    # align_pr split:
+    #
+    # `descend_r` is the continuous cost -- however high above the grasp
+    # band you currently are, once aligned. Added 2026-08-06 (BUG E): without
+    # it, `descend_pr` alone (a one-shot bonus per NEW record low, see below)
+    # made "aligned but not descending" exactly reward-NEUTRAL in every
+    # direction, including up -- a trained policy aligned perfectly then
+    # drifted from dz~0.24 up to dz~0.45 and parked there for the rest of the
+    # episode, because nothing was pulling it back down once the ratchet
+    # stopped paying. Not gated on `grip_open`, unlike `descend_pr` -- it
+    # can't be dodged by toggling the jaw the way BUG D's exploit dodged the
+    # ascent debit, since it applies regardless of jaw state.
+    descend_r = (-cfg.descend_scale * jnp.clip(dz - cfg.grasp_z_tol, 0.0, None)
+                 * aligned * approach_gate)
+    # `descend_pr` rewards a NEW low (via the `min_dz` ratchet), not a plain
+    # per-step delta -- see so101_pick.py step() history for why the delta
+    # form is exploitable (BUG D, 2026-08-06: the agent-controlled
+    # `grip_open` gate let a policy farm reward by swinging up and down
+    # instead of committing to a real descent).
     new_min_dz = jnp.where(approach_gate > 0.5, jnp.minimum(min_dz, dz), dz)
     descend_pr = (cfg.descend_progress_scale
                   * jnp.clip(min_dz - new_min_dz, 0.0, None)
@@ -134,13 +149,14 @@ def compute_pick_reward(
     lift_r = cfg.lift_scale * jnp.clip(cube_lift, 0.0, cfg.pick_height)
     succ_r = cfg.success_bonus * success
     table_pen = cfg.table_penalty_scale * table_hit
-    reward = (align_r + align_pr + open_r + descend_pr + grasp_r + lift_r
-              + succ_r - ctrl_cost - table_pen)
+    reward = (align_r + align_pr + open_r + descend_r + descend_pr + grasp_r
+              + lift_r + succ_r - ctrl_cost - table_pen)
 
     return {
         "reward": reward,
         "align_r": align_r, "align_pr": align_pr, "open_r": open_r,
-        "descend_pr": descend_pr, "grasp_r": grasp_r, "lift_r": lift_r,
+        "descend_r": descend_r, "descend_pr": descend_pr,
+        "grasp_r": grasp_r, "lift_r": lift_r,
         "succ_r": succ_r, "table_pen": table_pen,
         "aligned": aligned, "held": held, "success": success,
         "lifted_now": lifted_now, "ever_picked": ever_picked,

@@ -7,10 +7,14 @@ vision_rl/envs/so101_pick.py. No MJX/GPU/render needed, since the reward
 math is pure (see compute_pick_reward's docstring for why it was pulled out
 of step() into its own function).
 
-Also regression-tests the two reward-hacking bugs found 2026-08-05/06 (see
+Also regression-tests the reward-shaping bugs found 2026-08-05/06 (see
 so101_pick.py step() history): a flat per-step open bonus that let a policy
-camp instead of descending, and a per-step descend delta that let a policy
-farm reward by swinging up and down instead of committing to a real descent.
+camp instead of descending (BUG C), a per-step descend delta that let a
+policy farm reward by swinging up and down instead of committing to a real
+descent (BUG D), and a missing continuous height cost that made "aligned but
+never descending" reward-neutral in every direction including UP, so a
+trained policy aligned perfectly then drifted to a higher hover and parked
+there for the rest of the episode (BUG E, `descend_r`).
 
 Run with:  python -m tests.test_pick_reward
 """
@@ -91,6 +95,68 @@ def test_descend_ratchet_pays_new_lows_only():
     assert _close(out["descend_pr"], 3.0 * (0.20 - 0.15))  # +0.15
     assert _close(out["new_min_dz"], 0.15)
     print("[ok] descend ratchet: new low 0.20->0.15 pays +0.15")
+
+
+def test_descend_cost_pulls_toward_the_cube_continuously():
+    """Regression test for BUG E (2026-08-06): a trained policy aligned
+    perfectly (d_xy -> ~1cm) but then drifted from dz~0.24 up to dz~0.45 and
+    parked there for the rest of the episode, because descend_pr's ratchet
+    made ANY height reward-neutral once it stopped setting new records --
+    including going UP. descend_r fixes this by continuously costing however
+    high above the grasp band the gripper currently is, once aligned.
+    """
+    cfg = SO101PickConfig()
+    # Aligned, well above the grasp band (dz=0.20 >> grasp_z_tol=0.03).
+    out = _r(cfg, d_xy=0.01, dz=0.20, cube_z=0.0175, cube_init_z=0.0175,
+              grip_open=1.0, prev_d_xy=0.01, min_dz=0.20,
+              was_open=1.0, was_picked=0.0)
+    assert _close(out["descend_r"], -1.0 * (0.20 - 0.03))  # -0.17
+
+    # NOT aligned -- descend_r must be 0 even at the exact same height, so
+    # height only starts costing once horizontally over the cube (mirrors
+    # descend_pr/open_r's existing align-first gating).
+    unaligned = _r(cfg, d_xy=0.05, dz=0.20, cube_z=0.0175, cube_init_z=0.0175,
+                    grip_open=1.0, prev_d_xy=0.05, min_dz=0.20,
+                    was_open=1.0, was_picked=0.0)
+    assert _close(unaligned["descend_r"], 0.0)
+
+    # Already inside the grasp band (dz < grasp_z_tol) -- no more height
+    # penalty; it's done its job pulling the arm down this far.
+    at_band = _r(cfg, d_xy=0.01, dz=0.02, cube_z=0.0175, cube_init_z=0.0175,
+                  grip_open=1.0, prev_d_xy=0.01, min_dz=0.02,
+                  was_open=1.0, was_picked=0.0)
+    assert _close(at_band["descend_r"], 0.0)
+    print("[ok] descend_r: -0.17 while aligned+high, 0 while unaligned, "
+          "0 once inside the grasp band")
+
+
+def test_descend_cost_not_gated_by_jaw_state():
+    """The whole point of descend_r vs descend_pr: it must apply the SAME
+    penalty whether the jaw is open or closed, so it can't be dodged the way
+    BUG D's exploit dodged the ascent debit by closing the jaw.
+    """
+    cfg = SO101PickConfig()
+    open_jaw = _r(cfg, d_xy=0.01, dz=0.20, cube_z=0.0175, cube_init_z=0.0175,
+                   grip_open=1.0, prev_d_xy=0.01, min_dz=0.20,
+                   was_open=1.0, was_picked=0.0)
+    closed_jaw = _r(cfg, d_xy=0.01, dz=0.20, cube_z=0.0175, cube_init_z=0.0175,
+                     grip_open=0.0, prev_d_xy=0.01, min_dz=0.20,
+                     was_open=1.0, was_picked=0.0)
+    assert _close(open_jaw["descend_r"], closed_jaw["descend_r"])
+    assert _close(open_jaw["descend_r"], -0.17)
+    print("[ok] descend_r charges the same penalty regardless of jaw state")
+
+
+def test_descend_cost_shuts_off_once_lifted():
+    cfg = SO101PickConfig()
+    # Aligned and still high (dz=0.20, would cost -0.17 if approach_gate were
+    # on), but the cube has genuinely been lifted -> approach_gate=0.
+    out = _r(cfg, d_xy=0.01, dz=0.20, cube_z=0.10, cube_init_z=0.0175,
+              grip_open=0.0, prev_d_xy=0.01, min_dz=0.20,
+              was_open=1.0, was_picked=0.0)
+    assert _close(out["lifted_now"], 1.0)
+    assert _close(out["descend_r"], 0.0)   # would be -0.17 if ungated
+    print("[ok] descend_r shuts off once lifted, same as the other reach terms")
 
 
 def test_swing_exploit_no_longer_pays_on_revisit():
@@ -267,15 +333,19 @@ def test_full_attempt_end_to_end_totals():
         was_open, was_picked = float(out["was_open_next"]), float(out["ever_picked"])
 
     expected = [
-        -0.02,    # A: -0.08 + 0.06
-        0.664,    # B: -0.019 + 0.183 + 0.5
-        0.147,    # C: -0.015 + 0.012 + 0.15
-        0.237,    # D: -0.012 + 0.009 + 0.24
-        -0.012,   # E: -0.012 + 0 + 0 (swing up, no debit, no credit)
-        -0.012,   # F: -0.012 + 0 + 0 (revisited ground -- ratchet blocks it)
-        0.496,    # G: -0.010 + 0.006 + 0.5 (grasp handoff)
-        0.67,     # H: 0 + 0 + 0.5 + 0.17 (approach_gate off, lift ramping)
-        5.90,     # I: 0.5 + 0.40 (capped) + 5.0 (success)
+        -0.02,    # A: -0.08 + 0.06 (not aligned yet -> descend_r=0)
+        0.494,    # B: -0.019 + 0.183 + 0.5 - 0.17 (descend_r: aligned+high)
+        0.027,    # C: -0.015 + 0.012 + 0.15 - 0.12 (descend_r shrinks with dz)
+        0.197,    # D: -0.012 + 0.009 + 0.24 - 0.04
+        -0.232,   # E: -0.012 + 0 + 0 - 0.22 (swing up -- descend_r STILL
+                  #    charges, jaw-closed or not; this is the whole point)
+        -0.052,   # F: -0.012 + 0 + 0 - 0.04 (revisited ground -- descend_pr
+                  #    ratchet blocks it, but descend_r still charges for
+                  #    still being above the grasp band)
+        0.496,    # G: -0.010 + 0.006 + 0.5 (dz=0.025 already inside the
+                  #    grasp band -> descend_r=0, unchanged from before)
+        0.67,     # H: 0 + 0 + 0.5 + 0.17 (approach_gate off -> descend_r=0)
+        5.90,     # I: 0.5 + 0.40 (capped) + 5.0 (approach_gate off)
     ]
     for i, (got, want) in enumerate(zip(rewards, expected)):
         assert _close(got, want, tol=1e-3), (
@@ -290,6 +360,9 @@ if __name__ == "__main__":
     test_align_stage_far_from_cube()
     test_open_bonus_pays_once_not_every_step()
     test_descend_ratchet_pays_new_lows_only()
+    test_descend_cost_pulls_toward_the_cube_continuously()
+    test_descend_cost_not_gated_by_jaw_state()
+    test_descend_cost_shuts_off_once_lifted()
     test_swing_exploit_no_longer_pays_on_revisit()
     test_grasp_handoff_at_correct_position()
     test_grasp_at_wrong_position_earns_nothing_extra()

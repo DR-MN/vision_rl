@@ -67,14 +67,6 @@ class SO101PickConfig:
 
     episode_length: int = 250
     ctrl_dt: float = 0.03
-    # Residual joint-target range (rad) around home. 1.8 (not 0.9): the
-    # recalibrated home pins shoulder_lift EXACTLY at its lower limit
-    # (-1.745) and elbow_flex 0.05 rad from its upper limit, so a 0.9
-    # residual capped the gripper at x=0.234 m -- short of the spawn box and
-    # leaving ~46% of episodes physically ungraspable. 1.8 lets shoulder_lift
-    # reach +0.05, giving ~0.32 m reach and full spawn coverage. Verified by
-    # FK sweep: 98% of this spawn box supports hover+descend top-down picks
-    # (100% at a 35deg gripper-tilt tolerance).
     action_scale: float = 1.8
     # Per-control-step slew limit on arm joint targets (rad); see SO101Config.
     # Keeps the arm slow even though action_scale is large.
@@ -96,6 +88,21 @@ class SO101PickConfig:
     grasp_z_tol: float = 0.03          # |gripper_z - cube_z| allowed for a grasp
     align_scale: float = 1.0           # pull the gripper over the cube (horizontal)
     align_progress_scale: float = 3.0  # per-step horizontal progress
+    # Continuous cost for however high above the grasp band the gripper
+    # currently is, once aligned -- the vertical mirror of `align_scale`.
+    # Added 2026-08-06: `descend_progress_scale` alone only pays for a NEW
+    # record-low `dz` (see the min_dz ratchet in so101_pick.py, BUG D fix),
+    # which made "aligned but never descending" exactly reward-NEUTRAL in
+    # every direction, including up -- a trained policy aligned perfectly
+    # (d_xy converged to ~1cm) but then drifted from dz~0.24 up to dz~0.45
+    # and parked there for the rest of the episode, because nothing was
+    # pulling it back down once the ratchet stopped paying. `align_r` never
+    # has this problem because `d_xy` carries a continuous cost AND a
+    # progress bonus; `dz` only had the latter. `descend_scale` gives it the
+    # former too. NOT gated on `grip_open` (unlike `descend_progress_scale`)
+    # so it can't be dodged the way BUG D's exploit dodged the debit for
+    # ascending -- it applies regardless of jaw state.
+    descend_scale: float = 1.0
     # Per-step descent progress. Gated on aligned AND on the jaw being OPEN --
     # see open_bonus_scale below for why the open gate is there.
     descend_progress_scale: float = 3.0
