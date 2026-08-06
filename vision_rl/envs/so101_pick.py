@@ -56,7 +56,8 @@ class SO101PickState:
     was_open: jax.Array      # scalar 0/1, latched once the jaw opens over the cube
     grasped: jax.Array       # scalar 0/1, cube currently off the table
     prev_d_xy: jax.Array     # last-step HORIZONTAL gripper->cube offset (align shaping)
-    prev_dz: jax.Array       # last-step gripper height above cube centre (descend shaping)
+    min_dz: jax.Array        # best (lowest) gripper height above cube reached
+                              # this approach -- descend shaping ratchet, see step()
     step_count: jax.Array
     rng: jax.Array
     metrics: dict[str, Any]
@@ -219,7 +220,7 @@ class SO101PickEnv:
             cube_init_z=jnp.float32(self.cfg.cube_z),
             was_picked=jnp.float32(0.0), was_open=jnp.float32(0.0),
             grasped=jnp.float32(0.0),
-            prev_d_xy=d_xy0, prev_dz=dz0,
+            prev_d_xy=d_xy0, min_dz=dz0,
             step_count=jnp.int32(0),
             rng=rng, metrics=metrics,
         )
@@ -310,15 +311,37 @@ class SO101PickEnv:
         was_open_next = jnp.maximum(state.was_open, opened_ready)
         open_r = (self.cfg.open_bonus_scale * (was_open_next - state.was_open)
                   * approach_gate)
-        # --- Stage 3: descend onto it. This is the CONTINUOUS downward pull --
-        # it fires every step dz actually shrinks, unlike the one-shot open_r
-        # above. Gated on `aligned` (so lowering only pays once above the cube
-        # -- go up-and-over, not a sideways swipe) AND on `grip_open`, which
-        # makes opening a hard PREREQUISITE for earning any descent reward,
+        # --- Stage 3: descend onto it. This is the CONTINUOUS downward pull.
+        # Gated on `aligned` (so lowering only pays once above the cube -- go
+        # up-and-over, not a sideways swipe) AND on `grip_open`, which makes
+        # opening a hard PREREQUISITE for earning any descent reward,
         # enforcing align -> open -> descend order.
+        #
+        # Rewards a NEW low, not a plain per-step delta (BUG fixed 2026-08-06):
+        # `descend_progress_scale * (prev_dz - dz)` is only reward-neutral
+        # over a full down-up loop if the SAME gate applies both directions.
+        # Here the gate (`grip_open`) is under the agent's own control, so a
+        # policy that opens the jaw only while descending and closes it while
+        # climbing back up collects the "down" reward every cycle and pays
+        # NONE of the matching "up" cost (closed => the term is 0, not
+        # negative) -- a repeatable, no-risk profit loop. Confirmed in a
+        # trained checkpoint's rollout: dz sawtoothed 0.07-0.33m with
+        # `grip_open` flipping in lockstep with direction every ~12 steps,
+        # `cube_z` never moving -- literal up-down "swinging," never a real
+        # grasp attempt. Tracking the best (lowest) dz reached so far THIS
+        # approach and only paying for a new record closes the loop:
+        # revisiting a depth you've already been credited for -- open or
+        # closed, any path -- earns nothing, so the only way to keep earning
+        # is to keep actually going lower. `min_dz` free-tracks (no gating)
+        # while NOT approaching (`approach_gate=0`, i.e. already held/
+        # succeeded) so a later drop-and-retry starts its ratchet fresh from
+        # wherever the cube ended up, instead of being stuck against a stale
+        # record from the earlier attempt.
+        new_min_dz = jnp.where(approach_gate > 0.5,
+                                jnp.minimum(state.min_dz, dz), dz)
         descend_pr = (self.cfg.descend_progress_scale
-                      * (state.prev_dz - dz) * aligned * grip_open
-                      * approach_gate)
+                      * jnp.clip(state.min_dz - new_min_dz, 0.0, None)
+                      * aligned * grip_open * approach_gate)
         # Grasp bonus stays on while the cube is held, even above the lift line.
         # Active in the complementary height band to `open_r` (|dz| <
         # grasp_z_tol vs dz > grasp_z_tol), so the two hand off during descent.
@@ -349,6 +372,6 @@ class SO101PickEnv:
         return state.replace(
             data=data, obs=obs, reward=reward, done=done,
             was_picked=ever_picked, was_open=was_open_next, grasped=lifted_now,
-            prev_d_xy=d_xy, prev_dz=dz,
+            prev_d_xy=d_xy, min_dz=new_min_dz,
             step_count=step_count, metrics=metrics,
         )
