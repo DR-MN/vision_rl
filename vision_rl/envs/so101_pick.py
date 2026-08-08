@@ -58,6 +58,7 @@ class SO101PickState:
     prev_d_xy: jax.Array     # last-step HORIZONTAL gripper->cube offset (align shaping)
     min_dz: jax.Array        # best (lowest) gripper height above cube reached
                               # this approach -- descend shaping ratchet, see step()
+    prev_home_dist: jax.Array  # last-step gripper->home distance (carry-home shaping)
     step_count: jax.Array
     rng: jax.Array
     metrics: dict[str, Any]
@@ -70,6 +71,7 @@ def compute_pick_reward(
     prev_d_xy: jax.Array, min_dz: jax.Array,
     was_open: jax.Array, was_picked: jax.Array,
     table_hit: jax.Array, ctrl_cost: jax.Array,
+    home_dist: jax.Array, prev_home_dist: jax.Array,
 ) -> dict[str, jax.Array]:
     """Pure staged reward for so101_pick -- no physics, so it can be unit
     tested with hand-picked numbers (see tests/test_pick_reward.py) instead
@@ -148,19 +150,41 @@ def compute_pick_reward(
     # Caps at pick_height -- the reward saturates once the goal height is hit.
     lift_r = cfg.lift_scale * jnp.clip(cube_lift, 0.0, cfg.pick_height)
     succ_r = cfg.success_bonus * success
+
+    # --- Stage 6: carry the picked cube back to the home pose. Mirrors
+    # Stage 1's align_r + align_pr split exactly (continuous cost + progress
+    # bonus), but targets `home_dist` (gripper distance to its home position,
+    # computed in step() -- see the `_home_grasp_pos` comment in __init__)
+    # instead of the cube. Gated on `held * lifted_now`, NOT just
+    # `approach_gate`'s complement: `held` alone would let a policy drag the
+    # cube toward home along the table without ever lifting it (a shortcut
+    # around Stage 5), and requiring it stay TRUE the whole way back means
+    # dropping the cube mid-carry -- jaw opening for any reason -- instantly
+    # zeroes both terms, so there is no reward for arriving home empty-
+    # handed. `held` is tied to genuinely gripping the physical cube (not a
+    # free flag), so unlike BUG D's `grip_open` gate on `descend_pr`, toggling
+    # it here isn't a viable exploit: opening the jaw mid-carry drops the
+    # cube for real, losing succ_r/grasp_r/lift_r simultaneously -- far more
+    # than any home_pr trickery could gain.
+    carrying = held * lifted_now
+    home_r = -cfg.home_scale * home_dist * carrying
+    home_pr = cfg.home_progress_scale * (prev_home_dist - home_dist) * carrying
+
     table_pen = cfg.table_penalty_scale * table_hit
     reward = (align_r + align_pr + open_r + descend_r + descend_pr + grasp_r
-              + lift_r + succ_r - ctrl_cost - table_pen)
+              + lift_r + succ_r + home_r + home_pr - ctrl_cost - table_pen)
 
     return {
         "reward": reward,
         "align_r": align_r, "align_pr": align_pr, "open_r": open_r,
         "descend_r": descend_r, "descend_pr": descend_pr,
         "grasp_r": grasp_r, "lift_r": lift_r,
-        "succ_r": succ_r, "table_pen": table_pen,
+        "succ_r": succ_r, "home_r": home_r, "home_pr": home_pr,
+        "table_pen": table_pen,
         "aligned": aligned, "held": held, "success": success,
         "lifted_now": lifted_now, "ever_picked": ever_picked,
         "was_open_next": was_open_next, "new_min_dz": new_min_dz,
+        "new_prev_home_dist": home_dist,
     }
 
 
@@ -230,6 +254,18 @@ class SO101PickEnv:
         # backend-agnostic rationale (warp doesn't expose data.contact).
         # Clearance is measured above the table top at z=0.
         self._table_clear = self.cfg.table_clear
+
+        # Gripper's home xyz -- fixed forward-kinematics target for the
+        # carry-home stage (Stage 6, see compute_pick_reward). Computed once
+        # via plain MuJoCo FK (not mjx) since this only ever needs the STATIC
+        # home pose, not a batched/jitted call. Reads `home` (the physical
+        # reset pose the arm must end up at, hardware-verified), NOT
+        # `action_center` -- that keyframe exists purely for the action-
+        # decode math and isn't a place the arm is meant to return to.
+        home_data = mujoco.MjData(m)
+        home_data.qpos[:] = m.key_qpos[0]
+        mujoco.mj_forward(m, home_data)
+        self._home_grasp_pos = jnp.asarray(home_data.site_xpos[self._grasp_site])
 
     # ------------------------------------------------------------------ #
     @property
@@ -310,6 +346,7 @@ class SO101PickEnv:
         d_reach = jnp.linalg.norm(grasp0 - cube0)
         d_xy0 = jnp.linalg.norm(grasp0[:2] - cube0[:2])
         dz0 = grasp0[2] - cube0[2]
+        home_dist0 = jnp.linalg.norm(grasp0 - self._home_grasp_pos)
         metrics = {"dist": d_reach, "success": jnp.float32(0.0),
                    "cube_z": cube0[2], "lifted": jnp.float32(0.0),
                    "table_hit": jnp.float32(0.0),
@@ -321,7 +358,7 @@ class SO101PickEnv:
             cube_init_z=jnp.float32(self.cfg.cube_z),
             was_picked=jnp.float32(0.0), was_open=jnp.float32(0.0),
             grasped=jnp.float32(0.0),
-            prev_d_xy=d_xy0, min_dz=dz0,
+            prev_d_xy=d_xy0, min_dz=dz0, prev_home_dist=home_dist0,
             step_count=jnp.int32(0),
             rng=rng, metrics=metrics,
         )
@@ -357,6 +394,8 @@ class SO101PickEnv:
         # TOP-DOWN decomposition: horizontal offset and height above the cube.
         d_xy = jnp.linalg.norm(grasp[:2] - cube[:2])
         dz = grasp[2] - cube[2]
+        # Gripper distance to its home position -- Stage 6 (carry-home) target.
+        home_dist = jnp.linalg.norm(grasp - self._home_grasp_pos)
 
         # Gripper-closing command (action[5] < 0 -> closing); shaping so the jaw
         # tends to close when the fingers are actually at the cube.
@@ -375,6 +414,7 @@ class SO101PickEnv:
             grip_open, grip_closing,
             state.prev_d_xy, state.min_dz, state.was_open, state.was_picked,
             table_hit, ctrl_cost,
+            home_dist, state.prev_home_dist,
         )
 
         step_count = state.step_count + 1
@@ -393,5 +433,6 @@ class SO101PickEnv:
             was_picked=r["ever_picked"], was_open=r["was_open_next"],
             grasped=r["lifted_now"],
             prev_d_xy=d_xy, min_dz=r["new_min_dz"],
+            prev_home_dist=r["new_prev_home_dist"],
             step_count=step_count, metrics=metrics,
         )

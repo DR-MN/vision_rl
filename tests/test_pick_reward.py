@@ -30,12 +30,16 @@ from vision_rl.envs.so101_pick import compute_pick_reward
 
 
 def _r(cfg, d_xy, dz, cube_z, cube_init_z, grip_open, prev_d_xy, min_dz,
-       was_open, was_picked, table_hit=0.0, ctrl_cost=0.0):
+       was_open, was_picked, table_hit=0.0, ctrl_cost=0.0,
+       home_dist=0.0, prev_home_dist=0.0):
     """Thin wrapper: derive grip_closing from grip_open, like step() does.
 
     compute_pick_reward is written against jax arrays (uses .astype()), so
     plain Python floats need wrapping -- the real env always calls it with
-    jnp arrays coming out of physics.
+    jnp arrays coming out of physics. home_dist/prev_home_dist default to 0
+    -- harmless for every test that doesn't have BOTH held=1 and
+    lifted_now=1 (Stage 6's gate), since home_r/home_pr are 0 whenever that
+    gate is off regardless of these values.
     """
     f = jnp.float32
     return compute_pick_reward(
@@ -43,6 +47,7 @@ def _r(cfg, d_xy, dz, cube_z, cube_init_z, grip_open, prev_d_xy, min_dz,
         f(grip_open), f(1.0 - grip_open),
         f(prev_d_xy), f(min_dz), f(was_open), f(was_picked),
         f(table_hit), f(ctrl_cost),
+        f(home_dist), f(prev_home_dist),
     )
 
 
@@ -157,6 +162,70 @@ def test_descend_cost_shuts_off_once_lifted():
     assert _close(out["lifted_now"], 1.0)
     assert _close(out["descend_r"], 0.0)   # would be -0.17 if ungated
     print("[ok] descend_r shuts off once lifted, same as the other reach terms")
+
+
+def test_home_pull_requires_both_held_and_lifted():
+    """Stage 6 (carry the picked cube home). Gated on `held * lifted_now`,
+    not either alone: `held` without `lifted_now` would let a policy drag
+    the cube toward home along the table without ever lifting it (a
+    shortcut around Stage 5); `lifted_now` without `held` means the cube
+    was just dropped, and there must be no reward for arriving home
+    empty-handed.
+    """
+    cfg = SO101PickConfig()
+    # Both true: carrying for real.
+    carrying = _r(cfg, d_xy=0.01, dz=0.02, cube_z=0.10, cube_init_z=0.0175,
+                   grip_open=0.0, prev_d_xy=0.01, min_dz=0.02,
+                   was_open=1.0, was_picked=0.0,
+                   home_dist=0.30, prev_home_dist=0.30)
+    assert _close(carrying["held"], 1.0)
+    assert _close(carrying["lifted_now"], 1.0)
+    assert _close(carrying["home_r"], -1.0 * 0.30)   # -0.30
+
+    # held=1 but NOT lifted (cube_z=0.03 < lift_thresh=0.0525) -- e.g.
+    # dragging the cube along the table toward home without lifting.
+    dragging = _r(cfg, d_xy=0.01, dz=0.02, cube_z=0.03, cube_init_z=0.0175,
+                    grip_open=0.0, prev_d_xy=0.01, min_dz=0.02,
+                    was_open=1.0, was_picked=0.0,
+                    home_dist=0.30, prev_home_dist=0.30)
+    assert _close(dragging["held"], 1.0)
+    assert _close(dragging["lifted_now"], 0.0)
+    assert _close(dragging["home_r"], 0.0)
+
+    # lifted=1 but NOT held (jaw open -- the cube was just dropped).
+    dropped = _r(cfg, d_xy=0.01, dz=0.02, cube_z=0.10, cube_init_z=0.0175,
+                  grip_open=1.0, prev_d_xy=0.01, min_dz=0.02,
+                  was_open=1.0, was_picked=0.0,
+                  home_dist=0.30, prev_home_dist=0.30)
+    assert _close(dropped["held"], 0.0)
+    assert _close(dropped["lifted_now"], 1.0)
+    assert _close(dropped["home_r"], 0.0)
+    print("[ok] home_r requires held AND lifted_now together -- no shortcut "
+          "via dragging, no reward for arriving home empty-handed")
+
+
+def test_home_progress_symmetric_no_free_lunch_even_while_carrying():
+    """Unlike descend_pr, home_pr doesn't need a min-distance ratchet: its
+    gate (`held`) is expensive for the agent to toggle for free, since
+    opening the jaw mid-carry really drops the cube, losing succ_r/grasp_r/
+    lift_r simultaneously. So a plain symmetric delta is safe here -- moving
+    away costs exactly what moving closer earns, netting to zero over a
+    round trip while still carrying (same property align_pr has always had).
+    """
+    cfg = SO101PickConfig()
+    toward = _r(cfg, d_xy=0.01, dz=0.02, cube_z=0.10, cube_init_z=0.0175,
+                 grip_open=0.0, prev_d_xy=0.01, min_dz=0.02,
+                 was_open=1.0, was_picked=0.0,
+                 home_dist=0.20, prev_home_dist=0.30)     # closed 0.10 -> home
+    away = _r(cfg, d_xy=0.01, dz=0.02, cube_z=0.10, cube_init_z=0.0175,
+               grip_open=0.0, prev_d_xy=0.01, min_dz=0.02,
+               was_open=1.0, was_picked=0.0,
+               home_dist=0.30, prev_home_dist=0.20)       # opened 0.10 back up
+    assert _close(toward["home_pr"], 3.0 * 0.10)     # +0.30
+    assert _close(away["home_pr"], -3.0 * 0.10)      # -0.30
+    assert _close(toward["home_pr"] + away["home_pr"], 0.0)
+    print("[ok] home_pr: symmetric, nets to zero over a round trip (safe by "
+          "construction -- its gate isn't a free toggle)")
 
 
 def test_swing_exploit_no_longer_pays_on_revisit():
@@ -303,34 +372,40 @@ def test_ctrl_cost_and_table_penalty_subtract_correctly():
 
 
 def test_full_attempt_end_to_end_totals():
-    """Chains a full attempt -- align, open, descend, grasp, lift, success --
-    threading each step's outputs into the next, exactly as step() does via
-    the env's state fields. Every reward value below was independently
-    computed by hand from the config constants; see the module docstring.
+    """Chains a full attempt -- align, open, descend, grasp, lift, success,
+    carry home -- threading each step's outputs into the next, exactly as
+    step() does via the env's state fields. Every reward value below was
+    independently computed by hand from the config constants; see the
+    module docstring.
     """
     cfg = SO101PickConfig()
     prev_d_xy, min_dz, was_open, was_picked = 0.10, 0.20, 0.0, 0.0
-    cube_z = 0.0175
+    prev_home_dist = 0.35   # gripper starts this far from home (near the cube)
     rewards = []
 
     steps = [
-        # (d_xy,  dz,   grip_open, cube_z)
-        (0.08,  0.20, 0.0, 0.0175),   # A: approaching, jaw closed
-        (0.019, 0.20, 1.0, 0.0175),   # B: aligned, opens jaw (one-shot bonus)
-        (0.015, 0.15, 1.0, 0.0175),   # C: descending, new low
-        (0.012, 0.07, 1.0, 0.0175),   # D: descending further, new low
-        (0.012, 0.25, 0.0, 0.0175),   # E: swings up, jaw closes (no debit)
-        (0.012, 0.07, 1.0, 0.0175),   # F: swings back down -- OLD ground
-        (0.010, 0.025, 0.0, 0.0175),  # G: at cube, closes -> grasp_r takes over
-        (0.010, 0.020, 0.0, 0.06),    # H: lifting, approach_gate now off
-        (0.010, 0.020, 0.0, 0.12),    # I: past pick_height -> success
+        # (d_xy,  dz,   grip_open, cube_z, home_dist)
+        (0.08,  0.20,  0.0, 0.0175, 0.35),   # A: approaching, jaw closed
+        (0.019, 0.20,  1.0, 0.0175, 0.35),   # B: aligned, opens jaw (one-shot)
+        (0.015, 0.15,  1.0, 0.0175, 0.35),   # C: descending, new low
+        (0.012, 0.07,  1.0, 0.0175, 0.35),   # D: descending further, new low
+        (0.012, 0.25,  0.0, 0.0175, 0.35),   # E: swings up, jaw closes (no debit)
+        (0.012, 0.07,  1.0, 0.0175, 0.35),   # F: swings back down -- OLD ground
+        (0.010, 0.025, 0.0, 0.0175, 0.35),   # G: at cube, closes -> grasp_r
+        (0.010, 0.020, 0.0, 0.06,   0.35),   # H: lifted -- carrying starts,
+                                              #    hasn't moved toward home yet
+        (0.010, 0.020, 0.0, 0.12,   0.35),   # I: past pick_height -> success
+        (0.010, 0.020, 0.0, 0.12,   0.20),   # J: carrying home, real progress
+        (0.010, 0.020, 0.0, 0.12,   0.05),   # K: nearly home, still holding
     ]
-    for d_xy, dz, grip_open, cz in steps:
+    for d_xy, dz, grip_open, cz, home_dist in steps:
         out = _r(cfg, d_xy, dz, cz, 0.0175, grip_open,
-                  prev_d_xy, min_dz, was_open, was_picked)
+                  prev_d_xy, min_dz, was_open, was_picked,
+                  home_dist=home_dist, prev_home_dist=prev_home_dist)
         rewards.append(float(out["reward"]))
         prev_d_xy, min_dz = d_xy, float(out["new_min_dz"])
         was_open, was_picked = float(out["was_open_next"]), float(out["ever_picked"])
+        prev_home_dist = float(out["new_prev_home_dist"])
 
     expected = [
         -0.02,    # A: -0.08 + 0.06 (not aligned yet -> descend_r=0)
@@ -344,15 +419,21 @@ def test_full_attempt_end_to_end_totals():
                   #    still being above the grasp band)
         0.496,    # G: -0.010 + 0.006 + 0.5 (dz=0.025 already inside the
                   #    grasp band -> descend_r=0, unchanged from before)
-        0.67,     # H: 0 + 0 + 0.5 + 0.17 (approach_gate off -> descend_r=0)
-        5.90,     # I: 0.5 + 0.40 (capped) + 5.0 (approach_gate off)
+        0.32,     # H: 0.5 + 0.17 - 0.35 (carrying=1 starts; home_r charges
+                  #    for still being 0.35 from home, home_pr=0: no progress
+                  #    yet this step, prev_home_dist was also 0.35)
+        5.55,     # I: 0.5 + 0.40 + 5.0 - 0.35 (still 0.35 from home)
+        6.15,     # J: 0.5 + 0.40 + 5.0 - 0.20 (home_r) + 0.45 (home_pr: 3.0
+                  #    * (0.35-0.20), real progress toward home)
+        6.30,     # K: 0.5 + 0.40 + 5.0 - 0.05 (home_r) + 0.45 (home_pr: 3.0
+                  #    * (0.20-0.05)) -- reward keeps climbing all the way in
     ]
     for i, (got, want) in enumerate(zip(rewards, expected)):
         assert _close(got, want, tol=1e-3), (
             f"step {i}: got reward {got:.4f}, expected {want:.4f}")
     print("[ok] full attempt end-to-end:")
     for i, r in enumerate(rewards):
-        print(f"       step {i} ({'ABCDEFGHI'[i]}): reward = {r:+.3f}")
+        print(f"       step {i} ({'ABCDEFGHIJK'[i]}): reward = {r:+.3f}")
     print(f"       total over the attempt: {sum(rewards):+.3f}")
 
 
@@ -363,6 +444,8 @@ if __name__ == "__main__":
     test_descend_cost_pulls_toward_the_cube_continuously()
     test_descend_cost_not_gated_by_jaw_state()
     test_descend_cost_shuts_off_once_lifted()
+    test_home_pull_requires_both_held_and_lifted()
+    test_home_progress_symmetric_no_free_lunch_even_while_carrying()
     test_swing_exploit_no_longer_pays_on_revisit()
     test_grasp_handoff_at_correct_position()
     test_grasp_at_wrong_position_earns_nothing_extra()

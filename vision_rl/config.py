@@ -134,6 +134,23 @@ class SO101PickConfig:
     # Virtual clearance plane above the table top (z=0); see SO101Config.table_clear.
     table_clear: float = 0.02
 
+    # --- Stage 6 (2026-08-06): carry the picked cube back to the home pose --
+    # `so101_pick` used to end at `success` (held + lifted) with nothing
+    # pulling the arm anywhere afterward -- align_r/align_pr/descend_r/
+    # descend_pr all shut off via `approach_gate` the moment the cube leaves
+    # the table, so a trained policy would lift it into an arbitrary,
+    # sometimes awkward final pose with no penalty either way. `home_r`/
+    # `home_pr` mirror align_r/align_pr exactly (continuous cost + progress
+    # bonus) but target the gripper's HOME position instead of the cube, and
+    # are gated on `held * lifted_now` -- i.e. only once genuinely carrying
+    # the cube (not while still on the table: dragging it toward home
+    # without lifting first must not be a shortcut around Stage 5). Gating on
+    # `held` (not just `lifted_now`) means DROPPING the cube mid-carry
+    # immediately zeroes both terms -- there is no reward for arriving home
+    # empty-handed.
+    home_scale: float = 1.0            # mirrors align_scale
+    home_progress_scale: float = 3.0   # mirrors align_progress_scale
+
 
 @dataclass
 class RenderConfig:
