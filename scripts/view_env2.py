@@ -111,6 +111,19 @@ def main():
                          else np.concatenate([b[..., 3:], rgb], axis=-1))
         return {"pixels": frames["buf"][None], "proprio": np.asarray(s.obs)[None]}
 
+    def show_camera_frame(pixels, win="model input (RGB, as seen by policy)"):
+        """cv2.imshow the exact newest frame inside obs['pixels'] (mirrors
+        scripts/run_real.py's _show_frame, upscaled with INTER_NEAREST so the
+        tiny training-res frame is actually visible)."""
+        import cv2
+        rgb = np.asarray(pixels)[0, ..., -3:]
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        scale = max(1, 480 // bgr.shape[0])
+        preview = cv2.resize(bgr, (bgr.shape[1] * scale, bgr.shape[0] * scale),
+                              interpolation=cv2.INTER_NEAREST)
+        cv2.imshow(win, preview)
+        cv2.waitKey(1)
+
     ep = env.cfg.episode_length
     key = jax.random.PRNGKey(args.seed)
     s = reset(key)
@@ -148,7 +161,9 @@ def main():
             t0 = time.time()
             mirror(s)                         # show the state the policy will act on
             viewer.sync()
-            action = np.asarray(policy(get_obs(s)))
+            obs = get_obs(s)
+            show_camera_frame(obs["pixels"])
+            action = np.asarray(policy(obs))
             s = step(s, jnp.asarray(action))
             t += 1
             if bool(s.done) or t >= ep:
@@ -157,6 +172,8 @@ def main():
             dt = env.cfg.ctrl_dt - (time.time() - t0)
             if dt > 0:
                 time.sleep(dt)
+    import cv2
+    cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":

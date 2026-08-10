@@ -27,6 +27,7 @@ task, THEN move to hardware:
 from __future__ import annotations
 
 import argparse
+import csv
 import os
 import sys
 import time
@@ -62,6 +63,12 @@ def _show_frame(rgb, win="model input (RGB, as seen by policy)"):
     return cv2.waitKey(1) & 0xFF == ord("q")
 
 
+def _pixel_stats(rgb):
+    """(mean, min, max) of the newest frame -- cheap proxy for exposure/blank/frozen camera issues."""
+    arr = np.asarray(rgb)
+    return float(arr.mean()), int(arr.min()), int(arr.max())
+
+
 def _move_to(robot, bridge, goal, n=40, dt=0.02, max_step=0.05):
     """Slowly slew the (real) arm to a goal pose before/after a run."""
     cur = np.asarray(robot.read_joints(), dtype=np.float64)
@@ -78,7 +85,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", required=True, help="trained policy .msgpack")
     ap.add_argument("--robot", choices=["sim", "real"], default="sim")
-    ap.add_argument("--episodes", type=int, default=1)
+    ap.add_argument("--episodes", type=int, default=1,
+                    help="number of pick attempts to run (arm returns to home "
+                         "and pauses --home-wait seconds between each)")
+    ap.add_argument("--home-wait", type=float, default=10.0,
+                    help="seconds to pause at home between episodes (default: 10)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--realtime", dest="realtime", action="store_true", default=None,
                     help="hold real-time control period (default: on for real)")
@@ -97,6 +108,11 @@ def main():
     ap.add_argument("--show-camera", action="store_true",
                     help="cv2.imshow the exact frame fed to the model each step "
                          "(press 'q' in the window to stop)")
+    ap.add_argument("--debug", action="store_true",
+                    help="print the full obs (proprio + pixel stats) sent to the "
+                         "model and the action it returns, every control step")
+    ap.add_argument("--debug-log", type=str, default=None,
+                    help="also write per-step obs/action to this CSV file")
     args = ap.parse_args()
 
     # Config drives shapes/units; it travels inside the checkpoint.
@@ -125,6 +141,16 @@ def main():
         print("[run] slewing to home before start ...")
         _move_to(robot, bridge, bridge.home_targets())
 
+    debug_file = debug_writer = None
+    if args.debug_log:
+        debug_file = open(args.debug_log, "w", newline="")
+        debug_writer = csv.writer(debug_file)
+        debug_writer.writerow(
+            ["episode", "step", "t_wall"]
+            + [f"proprio_{i}" for i in range(bridge.proprio_dim)]
+            + ["pix_mean", "pix_min", "pix_max"]
+            + [f"action_{i}" for i in range(bridge.action_dim)])
+
     frames = []
     dt = bridge.ctrl_dt
     try:
@@ -141,6 +167,19 @@ def main():
                 step_t0 = time.perf_counter()
 
                 action = policy.act(obs)
+
+                if args.debug or debug_writer is not None:
+                    proprio = np.asarray(obs["proprio"])
+                    pix_mean, pix_min, pix_max = _pixel_stats(obs["pixels"][..., -3:])
+                    if args.debug:
+                        print(f"  ep{ep} t{t:3d}  obs.proprio={np.array2string(proprio, precision=3, suppress_small=True)}  "
+                              f"pix[mean={pix_mean:.1f} min={pix_min} max={pix_max}]  "
+                              f"-> action={np.array2string(action, precision=3, suppress_small=True)}")
+                    if debug_writer is not None:
+                        debug_writer.writerow(
+                            [ep, t, time.time()] + proprio.tolist()
+                            + [pix_mean, pix_min, pix_max] + action.tolist())
+
                 raw = bridge.action_to_targets(action)
                 commanded = _slew(raw, commanded, max_step)
                 robot.send_targets(commanded)
@@ -158,13 +197,19 @@ def main():
                     if lag > 0:
                         time.sleep(lag)
 
-                if t % 25 == 0:
+                if not args.debug and t % 25 == 0:
                     gz = bridge.grasp_xyz(qpos)[2]
                     print(f"  ep{ep} t{t:3d}  grip={action[-1]:+.2f}  "
                           f"grasp_z={gz:.3f}m  |a|={np.abs(action[:5]).mean():.2f}")
 
             rate = ep_len / (time.perf_counter() - loop_t0)
             print(f"[run] episode {ep} done ({rate:.1f} Hz effective)")
+
+            if ep < args.episodes - 1:
+                print("[run] returning to home ...")
+                _move_to(robot, bridge, bridge.home_targets())
+                print(f"[run] waiting {args.home_wait:.1f}s before next attempt ...")
+                time.sleep(args.home_wait)
     except KeyboardInterrupt:
         print("\n[run] interrupted -- stopping.")
     finally:
@@ -175,6 +220,9 @@ def main():
             except Exception:
                 pass
         robot.close()
+        if debug_file is not None:
+            debug_file.close()
+            print(f"[run] wrote per-step debug log -> {args.debug_log}")
         if args.show_camera:
             import cv2
             cv2.destroyAllWindows()
